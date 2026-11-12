@@ -8,6 +8,12 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-12
+
+### Changed
+
+- The README's commands run from the installed crate (`cargo install sororewind`).
+
 ## [0.1.0] - 2026-11-12
 
 ### Added
