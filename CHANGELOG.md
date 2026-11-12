@@ -8,6 +8,8 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-12
+
 ### Added
 
 - Protocols 29 and 30 in one build: sororewind embeds both Soroban hosts and

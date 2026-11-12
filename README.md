@@ -63,8 +63,14 @@ Binaries are published on the
 (Apple silicon and Intel), Linux (x86_64 and arm64, plus a static musl build
 that runs on any distribution) and Windows (x86_64).
 
-Prefer building it yourself? You need Rust 1.89 or newer (sororewind is not on
-crates.io yet):
+Prefer building it yourself? You need Rust 1.89 or newer. It is on
+[crates.io](https://crates.io/crates/sororewind):
+
+```bash
+cargo install --locked sororewind
+```
+
+Or build the development version straight from the repository:
 
 ```bash
 cargo install --locked --git https://github.com/Dione-b/sororewind
