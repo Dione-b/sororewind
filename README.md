@@ -92,7 +92,9 @@ environment variable instead, which keeps it out of your shell history and
 the process list. Either way sororewind only ever shows the scheme and host
 of the endpoint (`https://rpc.provider.io/…`), in the report and in errors.
 Transient RPC failures (connection errors, timeouts, HTTP 429, 502, 503 and
-504) are retried a few times before the run gives up.
+504) are retried a few times before the run gives up. Responses are requested
+gzip-compressed, which matters most for the ledger metadata fetched to rebuild
+past state (see [Why a replay can diverge](#why-a-replay-can-diverge)).
 
 The transaction must have failed in the Soroban host, and the RPC must still
 have it: RPCs keep a limited history, typically about a week, and the error
@@ -238,9 +240,12 @@ recorded. These are the known causes:
   contracts that rewrite the same entry every few ledgers, such as price
   oracles, replay as a match. An entry stays `drifted`, with the reason, when
   the metadata is outside the RPC's retention window (about a week), when the
-  RPC keeps none, or when the entry's history is too long to follow. TTL
-  extensions and deletions are only seen in the 16 ledgers after the
-  transaction; network settings are not rebuilt.
+  RPC keeps none, or when the entry's history is too long to follow (more
+  than 24 earlier writes back). TTL extensions and deletions are only seen in
+  the 16 ledgers after the transaction, which are fetched together in one
+  round trip; network settings are not rebuilt. Metadata is only fetched
+  when current state cannot prove that nothing changed, so a classic-only
+  footprint costs nothing extra.
 - **Rent priced from a moving window.** The checks stellar-core makes around
   the host are mirrored: archived entries, per-entry size limits, disk-read
   and write bytes, events size, and the refundable fee (`insufficient
@@ -287,7 +292,7 @@ cargo test
 ```
 
 ```bash
-cargo test --release --test live -- --ignored --nocapture
+cargo test --release --locked --test live -- --ignored --nocapture
 ```
 
 `cargo test` is fully offline: unit tests plus a snapshot of the narrative for
@@ -309,10 +314,17 @@ an exit code. Each stage lives in its own module:
 |-------|--------|--------------|
 | Fetch | `rpc.rs`, `transport.rs` | Talk to the RPC, or answer from a fixture. |
 | Decode | `tx.rs` | Read the envelope, footprint and on-chain result. |
-| Reconstruct | `state.rs` | Rebuild ledger entries, TTLs, network settings and the ledger header. |
-| Replay | `replay.rs` | Run the host and compare its result with the network's. |
+| Reconstruct | `state.rs`, `history.rs` | Rebuild ledger entries, TTLs, network settings and the ledger header; recover the value an entry had at the transaction from later ledger metadata. |
+| Replay | `replay.rs`, `host/` | Run the host for the ledger's protocol and compare its result with the network's. |
 | Narrate | `story.rs`, `spec.rs` | Turn diagnostic events into a call tree and a failure; read error names from the contract's spec. |
 | Report | `report.rs`, `render.rs` | Hold the outcome as data (the JSON schema), and print the narrative or the document. |
+
+`src/host/` embeds one `soroban-env-host` per supported protocol (`p29.rs`,
+`p30.rs`). The host-facing code is written once, in `host/proto.rs`, and
+compiled against each host; only XDR bytes and plain structs cross that
+boundary, and the rest of the crate uses the `stellar-xdr` of the newest host.
+Adding or dropping a protocol follows "Protocol upgrades" in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 `discover.rs` finds recent failed transactions on a live network, for the
 fixture tooling and the live test.
@@ -339,6 +351,9 @@ Then record one. An existing name refreshes that fixture, a new name adds one:
 cargo run --example record_fixture -- contract-error <TX_HASH>
 ```
 
+With `just`, the same two steps are `just find` and `just record
+contract-error <TX_HASH>`.
+
 By default `record_fixture` keeps a recording only if it replays as a match
 (`--allow-diverged` keeps a divergence on purpose), and it never replaces a
 working fixture with a failed one. Without arguments it re-records every
@@ -346,8 +361,8 @@ fixture from the hash and network it was made for, which only works while the RP
 has those transactions.
 
 A new fixture also needs a line in the `fixtures!` list in
-`tests/narrative.rs` and an accepted snapshot: run `cargo insta review`, after
-`cargo install cargo-insta`.
+`tests/narrative.rs` and an accepted snapshot: run `cargo insta review` (`just
+snap`), after `cargo install cargo-insta`.
 
 Each fixture comes from a `find_failed` category:
 
