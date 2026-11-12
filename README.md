@@ -70,12 +70,6 @@ Prefer building it yourself? You need Rust 1.89 or newer. It is on
 cargo install --locked sororewind
 ```
 
-Or build the development version straight from the repository:
-
-```bash
-cargo install --locked --git https://github.com/Dione-b/sororewind
-```
-
 Don't drop `--locked`. The embedded hosts are tested against exact dependency
 versions, and a different version can change what a host charges for a call,
 which is enough to turn a match into a divergence.
@@ -105,14 +99,15 @@ sororewind <TX_HASH> --network mainnet
 sororewind <TX_HASH> --rpc-url <RPC_URL>
 ```
 
-No network handy? Clone the repo and replay one of the recorded fixtures:
+No network handy? The recorded fixtures live in the repository (the crate
+doesn't ship them). Clone it and replay one with the sororewind you installed:
 
 ```bash
 git clone https://github.com/Dione-b/sororewind && cd sororewind
 ```
 
 ```bash
-cargo run -- --fixture fixtures/contract-error
+sororewind --fixture fixtures/contract-error
 ```
 
 A few things worth knowing:
