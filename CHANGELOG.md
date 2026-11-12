@@ -75,6 +75,10 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 - The minimum supported Rust is 1.89.
 - `getLedgers` fetches one ledger instead of 50 (about 14 MB less per run).
+- RPC responses are requested gzip-compressed, which shrinks the ledger
+  metadata fetched to rebuild past state.
+- The forward scan for later changes requests its pages of ledgers together,
+  so its 16-ledger window costs about one round trip.
 - The ledger header and the footprint entries are fetched concurrently, and
   footprint entries and contract code are encoded and copied once.
 - Missing or malformed network settings and durable entries without a TTL are
