@@ -1,0 +1,20 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &human)"
+---
+--- exit code: 0
+sororewind  974594…eeae  testnet
+ledger 5672305 · protocol 30 · 2026-11-11 08:19:28 UTC
+
+✓ replay matches network
+  on-chain  trapped
+  local     trapped
+
+where it broke
+  storage error ExceededLimit
+  "trying to access contract data key outside of the footprint [CBLLSKUH6N6HGFV5MSAMMJWJFYNUFEH7EGH2T4HJKOVMIZNJ23BZSMCM, [UserRewardState, GAEGW4O6ZSHPSVPJPT3WW4IBY2KKSCNDMORU7N5PK54WMRACVX7JD4BM]]"
+  in CBLLSKUH6N6HGFV5MSAMMJWJFYNUFEH7EGH2T4HJKOVMIZNJ23BZSMCM::withdraw_position (depth 0)
+
+call tree
+CBLLSKUH6N6HGFV5MSAMMJWJFYNUFEH7EGH2T4HJKOVMIZNJ23BZSMCM::withdraw_position(GAEGW4O6ZSHPSVPJPT3WW4IBY2KKSCNDMORU7N5PK54WMRACVX7JD4BM, 59720, 60140, 854358050, [403326, 177772126])  ✗
+    · VM call trapped with HostError [withdraw_position, storage error ExceededLimit]
