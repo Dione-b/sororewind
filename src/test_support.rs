@@ -604,6 +604,11 @@ pub fn sample_report() -> Report {
         protocol: 30,
         close_time: 1_700_000_000,
         status: "failed",
+        findings: vec![crate::findings::Finding {
+            severity: crate::findings::Severity::Error,
+            summary: "the transaction failed: contract error #3".to_string(),
+            evidence: vec!["failure".to_string()],
+        }],
         fidelity: Fidelity::MATCH,
         result: ResultPair {
             onchain: trapped.clone(),

@@ -6,6 +6,9 @@ expression: "common::transcript(&result, &human)"
 sororewind  b5f65d…00a0  testnet
 ledger 5670652 · protocol 30 · 2026-11-11 06:01:43 UTC
 
+findings
+  error      the transaction failed: auth error InvalidAction in transfer
+
 ✓ replay matches network
   on-chain  trapped
   local     trapped

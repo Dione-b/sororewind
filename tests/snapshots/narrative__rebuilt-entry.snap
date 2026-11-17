@@ -6,6 +6,9 @@ expression: "common::transcript(&result, &human)"
 sororewind  ce4e87…ce44  testnet
 ledger 5679032 · protocol 30 · 2026-11-11 17:40:03 UTC
 
+findings
+  error      the transaction failed: storage error ExceededLimit in write_prices
+
 ✓ replay matches network
   on-chain  trapped
   local     trapped

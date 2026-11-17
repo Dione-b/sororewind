@@ -120,6 +120,15 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
     "divergence": null,
     "match": true
   },
+  "findings": [
+    {
+      "evidence": [
+        "failure"
+      ],
+      "severity": "error",
+      "summary": "the transaction failed: contract error #10 in transfer"
+    }
+  ],
   "footprint": {
     "archived": [],
     "archivedInferred": [],

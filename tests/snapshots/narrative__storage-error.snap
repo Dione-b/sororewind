@@ -6,6 +6,9 @@ expression: "common::transcript(&result, &human)"
 sororewind  974594…eeae  testnet
 ledger 5672305 · protocol 30 · 2026-11-11 08:19:28 UTC
 
+findings
+  error      the transaction failed: storage error ExceededLimit in withdraw_position
+
 ✓ replay matches network
   on-chain  trapped
   local     trapped

@@ -6,6 +6,10 @@ expression: "common::transcript(&result, &human)"
 sororewind  8a5229…11e0  testnet
 ledger 5678910 · protocol 30 · 2026-11-11 17:29:53 UTC
 
+findings
+  error      the transaction failed: budget error ExceededLimit
+  warning    network setting changed after the transaction: LiveSorobanStateSizeWindow
+
 ✓ replay matches network
   on-chain  insufficient refundable fee
   local     insufficient refundable fee

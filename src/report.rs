@@ -11,6 +11,7 @@ use stellar_xdr::InvokeHostFunctionResult;
 
 use crate::culprit::Culprit;
 use crate::display;
+use crate::findings::Finding;
 use crate::hash::TxHash;
 use crate::history::Unresolved;
 use crate::replay::{BudgetUse, Fidelity, PrngSeed};
@@ -46,6 +47,11 @@ pub struct Report {
     /// Always `failed`: sororewind only replays failures.
     pub status: &'static str,
 
+    /// What matters in this report, most severe first: the transaction's own
+    /// failure, then everything about the replay (divergence, warnings,
+    /// limitations), each with the fields it rests on. Derived from the
+    /// sections below.
+    pub findings: Vec<Finding>,
     /// Whether the replay reproduced the network's outcome.
     pub fidelity: Fidelity,
     /// The network's recorded result and the replay's.

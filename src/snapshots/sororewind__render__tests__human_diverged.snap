@@ -5,6 +5,9 @@ expression: "human(&report, false, Detail::Summary)"
 sororewind  aaaaaa…aaaa  testnet
 ledger 1000 · protocol 30 · 2023-11-14 22:13:20 UTC · fee-bump
 
+findings
+  error      the transaction failed: contract error #3
+
 ⚠ replay diverged from the network (trapped vs entry archived)
   on-chain  trapped
   local     entry archived

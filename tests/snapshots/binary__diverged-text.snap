@@ -6,6 +6,10 @@ expression: "format!(\"--- exit code: 2\\n{text}\").replace(&path, \"<fixture>\"
 sororewind  dd1f9b…53db  testnet
 ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
 
+findings
+  error      the transaction failed on-chain: resource limit exceeded
+  divergence the replay ended in trapped where the network recorded resource limit exceeded; nothing in this run explains it
+
 ⚠ replay diverged from the network (resource limit exceeded vs trapped)
   on-chain  resource limit exceeded
   local     trapped

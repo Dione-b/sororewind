@@ -22,6 +22,7 @@ pub mod culprit;
 pub mod discover;
 pub mod display;
 pub mod error;
+pub mod findings;
 pub mod hash;
 pub mod history;
 pub mod host;

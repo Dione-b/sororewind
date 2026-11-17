@@ -12,6 +12,15 @@ expression: json(&sample_report()).unwrap()
   "protocol": 30,
   "closeTime": 1700000000,
   "status": "failed",
+  "findings": [
+    {
+      "severity": "error",
+      "summary": "the transaction failed: contract error #3",
+      "evidence": [
+        "failure"
+      ]
+    }
+  ],
   "fidelity": {
     "match": true,
     "divergence": null

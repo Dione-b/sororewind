@@ -9,6 +9,7 @@ use std::io::IsTerminal;
 
 use owo_colors::OwoColorize;
 
+use crate::findings::Severity;
 use crate::replay::{Divergence, PrngSeed};
 use crate::report::Report;
 use crate::story::{Call, Failure};
@@ -161,6 +162,7 @@ pub fn human(report: &Report, color: bool, detail: Detail) -> String {
 
 fn write_human(out: &mut impl Write, report: &Report, p: &Palette, detail: Detail) -> fmt::Result {
     header(out, report, p)?;
+    findings(out, report, p, detail)?;
     fidelity(out, report, p)?;
     if let Some(failure) = &report.story.failure {
         where_it_broke(out, failure, p, detail)?;
@@ -197,6 +199,34 @@ fn header(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
             utc(report.close_time)
         ))
     )?;
+    writeln!(out)
+}
+
+/// The findings at a glance: the transaction's own failure first, then what
+/// is the matter with the replay. `-v` adds the report fields each rests on.
+fn findings(out: &mut impl Write, report: &Report, p: &Palette, detail: Detail) -> fmt::Result {
+    writeln!(out, "{}", p.bold("findings"))?;
+    for finding in &report.findings {
+        let (label, paint): (&str, fn(&Palette, &str) -> String) = match finding.severity {
+            Severity::Error => ("error", Palette::red),
+            Severity::Divergence => ("divergence", Palette::yellow),
+            Severity::Warning => ("warning", Palette::yellow),
+            Severity::Limitation => ("limitation", Palette::dim),
+        };
+        writeln!(
+            out,
+            "  {} {}",
+            paint(p, &format!("{label:<10}")),
+            safe(&finding.summary)
+        )?;
+        if detail >= Detail::Budget {
+            writeln!(
+                out,
+                "  {}",
+                p.dim(&format!("{:<10} ↳ {}", "", finding.evidence.join(", ")))
+            )?;
+        }
+    }
     writeln!(out)
 }
 
