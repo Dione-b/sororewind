@@ -91,6 +91,11 @@ pub struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
+    /// Do not show which stage a live run is in on stderr (it is only shown
+    /// on a terminal, and never with --json, -v or --fixture)
+    #[arg(long)]
+    pub no_progress: bool,
+
     /// Replay from a recorded RPC fixture directory instead of the network
     #[arg(long, value_name = "DIR")]
     pub fixture: Option<PathBuf>,
@@ -285,6 +290,17 @@ impl Cli {
         }
     }
 
+    /// Whether to print the stage a live run is in: only when stderr is a
+    /// terminal, and not when the output is JSON, the logs already narrate
+    /// (`-v`), a fixture answers instantly, or `--no-progress` says no.
+    pub fn show_progress(&self, stderr_is_terminal: bool) -> bool {
+        stderr_is_terminal
+            && !self.no_progress
+            && !self.json
+            && self.verbose == 0
+            && self.fixture.is_none()
+    }
+
     /// The timeouts, retries and deadline the flags and the environment ask
     /// for; a flag wins over its variable.
     pub fn transport_config(&self) -> Result<TransportConfig> {
@@ -374,6 +390,17 @@ mod tests {
 
     fn parse(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         Cli::try_parse_args(std::iter::once("sororewind").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn progress_is_only_for_a_terminal_and_a_live_run() {
+        let shown = |args: &[&str], terminal| parse(args).unwrap().show_progress(terminal);
+        assert!(shown(&[HASH], true));
+        assert!(!shown(&[HASH], false));
+        for off in ["--no-progress", "--json", "-v"] {
+            assert!(!shown(&[HASH, off], true), "{off}");
+        }
+        assert!(!shown(&["--fixture", "dir"], true));
     }
 
     #[test]

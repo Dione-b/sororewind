@@ -28,6 +28,7 @@ pub mod history;
 pub mod host;
 pub mod network;
 pub mod pipeline;
+pub mod progress;
 pub mod render;
 pub mod replay;
 pub mod report;
@@ -46,7 +47,8 @@ mod test_support;
 pub use error::{Result, RewindError};
 pub use hash::TxHash;
 pub use network::Network;
-pub use pipeline::{Request, run};
+pub use pipeline::{Request, run, run_with_progress};
+pub use progress::{Progress, Step};
 pub use report::{Outcome, Report};
 
 /// The replay ran and reproduced the network's recorded result.
