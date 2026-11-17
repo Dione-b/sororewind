@@ -233,11 +233,13 @@ next to the message on stderr:
 ```json
 {
   "schemaVersion": 1,
-  "error": { "kind": "not_found", "message": "transaction … not found on testnet. …" }
+  "error": { "kind": "not_found", "stage": "fetch", "message": "transaction … not found on testnet. …" }
 }
 ```
 
-`kind` is stable: `not_found`, `not_a_failure`, `not_soroban`,
+`stage` says which part of the run failed: `input`, `fetch`, `decode`,
+`reconstruct`, `replay` or `output`; on stderr the message carries it as a
+prefix (`sororewind: [fetch] …`). `kind` is stable: `not_found`, `not_a_failure`, `not_soroban`,
 `never_reached_host`, `protocol_mismatch`, `network_mismatch`,
 `ledger_unavailable`, `rpc_unreachable` (also when `--deadline` passes),
 `rpc_error`, `invalid_option` (a bad `SOROREWIND_*` variable), plus a few for

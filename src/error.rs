@@ -401,6 +401,48 @@ impl RewindError {
         }
     }
 
+    /// The pipeline stage the failure comes from, for the `--json` error
+    /// document and the prefix of the message on stderr. Every kind maps to
+    /// exactly one stage, with no catch-all: a new variant must pick one.
+    ///
+    /// Narration (`spec`) is part of the replay's own output, so its errors
+    /// belong to [`Stage::Replay`]; they are logged rather than fatal today.
+    pub fn stage(&self) -> Stage {
+        match self {
+            RewindError::InvalidHash { .. }
+            | RewindError::MissingHash
+            | RewindError::InvalidRpcUrl { .. }
+            | RewindError::InvalidOption { .. }
+            | RewindError::FixtureHashMismatch { .. }
+            | RewindError::WasmFile { .. } => Stage::Input,
+            RewindError::NotFound { .. }
+            | RewindError::RpcUnreachable { .. }
+            | RewindError::HttpClient(_)
+            | RewindError::Rpc { .. }
+            | RewindError::NetworkMismatch { .. }
+            | RewindError::FixtureIo { .. }
+            | RewindError::FixtureInvalid { .. }
+            | RewindError::FixtureMissing { .. }
+            | RewindError::RecordIo { .. } => Stage::Fetch,
+            RewindError::NotSoroban { .. }
+            | RewindError::NeverReachedHost { .. }
+            | RewindError::NotAFailure { .. }
+            | RewindError::XdrDecode { .. }
+            | RewindError::Base64 { .. }
+            | RewindError::MissingField { .. } => Stage::Decode,
+            RewindError::LedgerUnavailable { .. }
+            | RewindError::ConfigSettingMissing { .. }
+            | RewindError::ConfigSettingMalformed { .. }
+            | RewindError::MissingTtl { .. } => Stage::Reconstruct,
+            RewindError::ProtocolMismatch { .. }
+            | RewindError::XdrEncode { .. }
+            | RewindError::SpecMissing { .. }
+            | RewindError::ContractCode { .. }
+            | RewindError::Replay(_) => Stage::Replay,
+            RewindError::Output(_) => Stage::Output,
+        }
+    }
+
     pub(crate) fn fixture_path(path: impl Into<PathBuf>) -> impl FnOnce(std::io::Error) -> Self {
         let path = path.into();
         move |source| RewindError::FixtureIo { path, source }
@@ -409,6 +451,39 @@ impl RewindError {
     pub(crate) fn record_path(path: impl Into<PathBuf>) -> impl FnOnce(std::io::Error) -> Self {
         let path = path.into();
         move |source| RewindError::RecordIo { path, source }
+    }
+}
+
+/// The part of a run a [`RewindError`] comes from. Names are part of the
+/// public interface: add, never rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// What the user passed in: arguments, environment, files given by path.
+    Input,
+    /// Getting the transaction and its ledger from the RPC or a fixture.
+    Fetch,
+    /// Reading what came back: XDR, and whether it is a failed Soroban call.
+    Decode,
+    /// Rebuilding the state the transaction ran against.
+    Reconstruct,
+    /// Setting up and running the embedded host, and narrating its result.
+    Replay,
+    /// Serialising and writing the report.
+    Output,
+}
+
+impl Stage {
+    /// The stable name, as it appears in JSON and in the message prefix.
+    pub fn name(self) -> &'static str {
+        match self {
+            Stage::Input => "input",
+            Stage::Fetch => "fetch",
+            Stage::Decode => "decode",
+            Stage::Reconstruct => "reconstruct",
+            Stage::Replay => "replay",
+            Stage::Output => "output",
+        }
     }
 }
 
@@ -515,5 +590,6 @@ mod tests {
         assert!(error(None).to_string().ends_with("for this rpc instance"));
         assert!(error(None).is_ledger_out_of_range());
         assert_eq!(error(None).kind(), "rpc_error");
+        assert_eq!(error(None).stage(), Stage::Fetch);
     }
 }

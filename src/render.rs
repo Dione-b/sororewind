@@ -141,12 +141,17 @@ pub fn json(report: &Report) -> serde_json::Result<String> {
 }
 
 /// The JSON document of a run that failed: `{"schemaVersion": 1, "error":
-/// {"kind": "not_found", "message": "…"}}`. `kind` is stable per kind of
-/// failure; `message` is the text printed on stderr.
+/// {"kind": "not_found", "stage": "fetch", "message": "…"}}`. `kind` is stable
+/// per kind of failure and `stage` names the part of the run it comes from;
+/// `message` is the text printed on stderr.
 pub fn json_error(error: &crate::RewindError) -> String {
     let document = serde_json::json!({
         "schemaVersion": crate::report::SCHEMA_VERSION,
-        "error": { "kind": error.kind(), "message": error.to_string() },
+        "error": {
+            "kind": error.kind(),
+            "stage": error.stage(),
+            "message": error.to_string(),
+        },
     });
     // A map of strings always serialises.
     serde_json::to_string_pretty(&document).unwrap_or_default()
@@ -1024,6 +1029,7 @@ mod tests {
         let document: serde_json::Value = serde_json::from_str(&json_error(&error)).unwrap();
         assert_eq!(document["schemaVersion"], 1);
         assert_eq!(document["error"]["kind"], "ledger_unavailable");
+        assert_eq!(document["error"]["stage"], "reconstruct");
         assert_eq!(document["error"]["message"], error.to_string());
     }
 

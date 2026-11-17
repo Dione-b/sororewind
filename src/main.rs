@@ -115,7 +115,7 @@ async fn main() -> ExitCode {
             if cli.json {
                 let _ = write_stdout(&format!("{}\n", render::json_error(&err)));
             }
-            eprintln!("sororewind: {err}");
+            eprintln!("sororewind: [{}] {err}", err.stage().name());
             ExitCode::from(sororewind::EXIT_ERROR)
         }
     }
@@ -126,7 +126,7 @@ fn finish(printed: Result<()>) -> ExitCode {
     match printed {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("sororewind: {err}");
+            eprintln!("sororewind: [{}] {err}", err.stage().name());
             ExitCode::from(sororewind::EXIT_ERROR)
         }
     }

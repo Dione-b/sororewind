@@ -10,6 +10,9 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ### Added
 
+- Errors name the stage of the run they come from: `error.stage` in the JSON
+  error document (`input`, `fetch`, `decode`, `reconstruct`, `replay` or
+  `output`, an additive field) and a `[stage]` prefix on the stderr message.
 - Findings: the report opens with a short list of what matters, each with a
   severity (`error` for the transaction's own failure, then `divergence`,
   `warning` and `limitation` for the replay), a one-line summary naming the
