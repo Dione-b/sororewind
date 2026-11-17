@@ -8,6 +8,8 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-17
+
 ### Added
 
 - The fidelity check goes beyond the result code: a replay also diverges when
