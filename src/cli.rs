@@ -9,7 +9,7 @@ use crate::error::{Result, RewindError};
 use crate::hash::TxHash;
 use crate::network::Network;
 use crate::pipeline::Request;
-use crate::render::ColorChoice;
+use crate::render::{ColorChoice, Format};
 use crate::rpc::RpcClient;
 use crate::transport::{
     FixtureTransport, HttpTransport, Recording, RecordingHandle, TransportConfig,
@@ -68,7 +68,12 @@ pub struct Cli {
     #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=86_400))]
     pub deadline: Option<u64>,
 
-    /// Emit machine-readable JSON instead of the human narrative
+    /// How to write the report: text (the narrative, default), json,
+    /// markdown (for a GitHub issue or PR) or html (one self-contained file)
+    #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "json")]
+    pub format: Option<Format>,
+
+    /// Same as --format json
     #[arg(long)]
     pub json: bool,
 
@@ -281,6 +286,15 @@ impl Cli {
         Cli::from_arg_matches(&matches)
     }
 
+    /// The output format the flags amount to.
+    pub fn output_format(&self) -> Format {
+        if self.json {
+            Format::Json
+        } else {
+            self.format.unwrap_or_default()
+        }
+    }
+
     /// The colour choice the flags amount to.
     pub fn color_choice(&self) -> ColorChoice {
         if self.no_color {
@@ -296,7 +310,7 @@ impl Cli {
     pub fn show_progress(&self, stderr_is_terminal: bool) -> bool {
         stderr_is_terminal
             && !self.no_progress
-            && !self.json
+            && self.output_format() != Format::Json
             && self.verbose == 0
             && self.fixture.is_none()
     }
@@ -397,10 +411,26 @@ mod tests {
         let shown = |args: &[&str], terminal| parse(args).unwrap().show_progress(terminal);
         assert!(shown(&[HASH], true));
         assert!(!shown(&[HASH], false));
-        for off in ["--no-progress", "--json", "-v"] {
+        for off in ["--no-progress", "--json", "--format=json", "-v"] {
             assert!(!shown(&[HASH, off], true), "{off}");
         }
         assert!(!shown(&["--fixture", "dir"], true));
+        // A document to share is written to a file, so the stages still show.
+        assert!(shown(&[HASH, "--format", "markdown"], true));
+    }
+
+    #[test]
+    fn json_is_an_alias_of_the_json_format() {
+        let format = |args: &[&str]| parse(args).unwrap().output_format();
+        assert_eq!(format(&[HASH]), Format::Text);
+        assert_eq!(format(&[HASH, "--json"]), Format::Json);
+        assert_eq!(format(&[HASH, "--format", "html"]), Format::Html);
+        assert_eq!(
+            parse(&[HASH, "--json", "--format", "html"])
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ArgumentConflict
+        );
     }
 
     #[test]

@@ -1,0 +1,88 @@
+---
+source: tests/export.rs
+expression: "export::html(&report)"
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sororewind dd1f9b…53db</title>
+<style>
+:root { color-scheme: light dark; --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --rule: #d1d9e0; --code: #f6f8fa; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --rule: #3d444d; --code: #151b23; } }
+body { background: var(--bg); color: var(--fg); margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1rem; }
+h1 { font-size: 1.5rem; } h2 { font-size: 1.15rem; border-bottom: 1px solid var(--rule); padding-bottom: .25rem; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .875rem; }
+code { background: var(--code); padding: .1rem .3rem; border-radius: .25rem; }
+pre { background: var(--code); padding: .75rem; border-radius: .375rem; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { border: 1px solid var(--rule); border-radius: .375rem; padding: .25rem .75rem; margin: 1rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<h1>sororewind dd1f9b…53db on testnet</h1>
+<p>ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC</p>
+<p><strong>✓ The replay matches the network.</strong></p>
+<ul>
+<li>on-chain: trapped</li>
+<li>local: trapped</li>
+</ul>
+<h2>Findings</h2>
+<ul>
+<li><strong>error</strong> the transaction failed: contract error #10 in transfer (evidence: <code>failure</code>)</li>
+</ul>
+<h2>Where it broke</h2>
+<ul>
+<li><strong>contract error #10</strong> · <code>BalanceError</code></li>
+<li>message: <code>resulting balance is not within the allowed range [10000000, -15000000100, 9223372036854775807]</code></li>
+<li>in <code>CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer</code> (depth 0)</li>
+</ul>
+<details open>
+<summary>Call tree</summary>
+<pre><code>CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer(GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000)  ✗</code></pre>
+</details>
+<details>
+<summary>Budget and footprint</summary>
+<ul>
+<li>budget: 907,402 / 1,033,991 cpu instructions · 23.6 KB / 40.0 MB memory</li>
+<li>footprint: 4 entries · 0 drifted · 0 ttl-drifted · 1 missing · 0 rebuilt</li>
+<li>prng seed: derived</li>
+<li>why <code>contract data G…SCWC &lt;nonce 1082260681902037437&gt; (temporary)</code> (absent) — the RPC has no such entry, so the host was handed none</li>
+</ul>
+</details>
+<details>
+<summary>Diagnostic events</summary>
+<p><strong>On-chain diagnostics</strong></p>
+<pre><code>fail [-] fn_call, 0xd7928b72c2703ccf…(32 bytes), transfer [GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000]
+fail [CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC] error, contract error #10 [&quot;resulting balance is not within the allowed range&quot;, 10000000, -15000000100, 9223372036854775807]
+fail [-] host_fn_failed, contract error #10 void
+fail [-] core_metrics, read_entry 4
+fail [-] core_metrics, write_entry 0
+fail [-] core_metrics, ledger_read_byte 236
+fail [-] core_metrics, ledger_write_byte 0
+fail [-] core_metrics, read_key_byte 80
+fail [-] core_metrics, write_key_byte 0
+fail [-] core_metrics, read_data_byte 236
+fail [-] core_metrics, write_data_byte 0
+fail [-] core_metrics, read_code_byte 0
+fail [-] core_metrics, write_code_byte 0
+fail [-] core_metrics, emit_event 0
+fail [-] core_metrics, emit_event_byte 0
+fail [-] core_metrics, cpu_insn 907402
+fail [-] core_metrics, mem_byte 24184
+fail [-] core_metrics, invoke_time_nsecs 269714
+fail [-] core_metrics, max_rw_key_byte 40
+fail [-] core_metrics, max_rw_data_byte 144
+fail [-] core_metrics, max_rw_code_byte 0
+fail [-] core_metrics, max_emit_event_byte 0</code></pre>
+<p><strong>Local diagnostics</strong></p>
+<pre><code>fail [-] fn_call, 0xd7928b72c2703ccf…(32 bytes), transfer [GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000]
+fail [CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC] error, contract error #10 [&quot;resulting balance is not within the allowed range&quot;, 10000000, -15000000100, 9223372036854775807]</code></pre>
+</details>
+</main>
+</body>
+</html>

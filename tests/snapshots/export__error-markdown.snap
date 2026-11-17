@@ -1,0 +1,11 @@
+---
+source: tests/export.rs
+expression: markdown
+---
+# sororewind could not replay the transaction
+
+**reconstruct** stage · `ledger_unavailable`
+
+```text
+the RPC has no ledger 7 in its retention window; it can no longer tell us the state that transaction ran against
+```

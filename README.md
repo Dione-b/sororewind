@@ -157,6 +157,29 @@ Want more?
 The report always goes to stdout, the debug lines to stderr. To keep
 everything: `sororewind <TX_HASH> -vv 2>&1 | tee run.log`.
 
+## Sharing a report
+
+To put a diagnosis in an issue, a PR or a chat, ask for a document instead of
+pasting terminal text:
+
+```bash
+sororewind <hash> --format markdown | gh issue create --title "…" --body-file -
+sororewind <hash> --format html > diagnosis.html
+```
+
+Both are built from the same report as the JSON, not from the terminal
+narrative, and hold the same content: the verdict, the findings, the probable
+causes, where it broke, the call tree, the budget and footprint, and the
+diagnostic events. The Markdown puts the call tree and the rest of the detail
+in collapsible sections. The HTML is a single file with its style inline, no
+scripts and no external requests; it follows the reader's light or dark
+setting. Text that came from a contract or an RPC is escaped, so it cannot
+turn into markup.
+
+When the run fails (exit `1`) the same format is used for the error:
+Markdown and HTML get a short document with the stage, the kind and the
+message, `json` its error document, and `text` only the message on stderr.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -179,7 +202,8 @@ nothing else.
 | `--timeout <SECONDS>` | How long one RPC request may take before it is abandoned and retried (1 to 3600, default 30). `SOROREWIND_TIMEOUT` sets it from the environment. |
 | `--retries <N>` | How many times a failed RPC call is retried (0 to 10, default 3; `0` never retries). `SOROREWIND_RETRIES` sets it. |
 | `--deadline <SECONDS>` | How long the whole run may spend on the RPC, retries and waits included (1 to 86400; default none). A call still going then fails with `rpc_unreachable`. `SOROREWIND_DEADLINE` sets it. |
-| `--json` | Print a JSON document instead of the narrative. |
+| `--format <text\|json\|markdown\|html>` | How the report is written: the terminal narrative (`text`, default), the JSON document, Markdown for a GitHub issue or PR, or one self-contained HTML file. See [Sharing a report](#sharing-a-report). |
+| `--json` | Same as `--format json`. |
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
 | `--color <auto\|always\|never>` | `auto` (default) colours a terminal and honours a non-empty `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb`. Use `always` in a pager: `sororewind … --color always \| less -R`. |
 | `--no-color` | Same as `--color never`. |
