@@ -111,26 +111,22 @@ async fn main() -> ExitCode {
 
     let result = run(&cli).await;
     let code = sororewind::exit_code(&result);
+    let format = cli.output_format();
     let printed = result.and_then(|report| {
-        let text = if cli.json {
-            let mut document = render::json(&report)
-                .map_err(|e| sororewind::RewindError::Output(e.to_string()))?;
-            document.push('\n');
-            document
-        } else {
-            let detail = Detail::from_verbosity(cli.verbose);
-            let color = render::use_color(cli.color_choice(), &render::ColorEnv::current());
-            render::human(&report, color, detail)
-        };
+        let detail = Detail::from_verbosity(cli.verbose);
+        let color = render::use_color(cli.color_choice(), &render::ColorEnv::current());
+        let text = render::report(&report, format, color, detail)
+            .map_err(|e| sororewind::RewindError::Output(e.to_string()))?;
         write_stdout(&text)
     });
 
     match printed {
         Ok(()) => ExitCode::from(code),
         Err(err) => {
-            // A script reading `--json` gets a document either way.
-            if cli.json {
-                let _ = write_stdout(&format!("{}\n", render::json_error(&err)));
+            // A script reading `--json`, or a file written as Markdown or
+            // HTML, gets a document either way.
+            if let Some(document) = render::error(&err, format) {
+                let _ = write_stdout(&document);
             }
             eprintln!("sororewind: [{}] {err}", err.stage().name());
             ExitCode::from(sororewind::EXIT_ERROR)

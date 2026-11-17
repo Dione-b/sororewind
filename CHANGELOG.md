@@ -10,6 +10,10 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ### Added
 
+- `--format text|json|markdown|html`. `markdown` is for a GitHub issue or PR,
+  with the call tree and the detail in collapsible sections; `html` is one
+  self-contained file. Errors are written in the chosen format too. `--json`
+  stays as an alias of `--format json`.
 - A live run on a terminal shows the stage it is in on stderr (fetching the
   transaction, fetching entries, rebuilding state, replaying). `--no-progress`
   turns it off; it is also off with `--json`, `-v`, `--fixture` and when

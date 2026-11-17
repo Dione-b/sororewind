@@ -134,6 +134,63 @@ impl Palette {
     }
 }
 
+/// How the report is written: the terminal narrative, or a document to share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum Format {
+    /// The narrative for a terminal.
+    #[default]
+    Text,
+    /// The whole report as one JSON document.
+    Json,
+    /// Markdown for a GitHub issue or PR, with collapsible sections.
+    Markdown,
+    /// One self-contained HTML file.
+    Html,
+}
+
+/// The report in `format`; `color` and `detail` only matter to
+/// [`Format::Text`], and the JSON may fail to serialise.
+pub fn report(
+    report: &Report,
+    format: Format,
+    color: bool,
+    detail: Detail,
+) -> serde_json::Result<String> {
+    Ok(match format {
+        Format::Text => human(report, color, detail),
+        Format::Json => {
+            let mut document = json(report)?;
+            document.push('\n');
+            document
+        }
+        Format::Markdown => crate::export::markdown(report),
+        Format::Html => crate::export::html(report),
+    })
+}
+
+/// A failed run in `format`. The text form is the message on stderr, so
+/// there is nothing to write on stdout for it.
+pub fn error(error: &crate::RewindError, format: Format) -> Option<String> {
+    match format {
+        Format::Text => None,
+        Format::Json => Some(format!("{}\n", json_error(error))),
+        Format::Markdown => Some(crate::export::markdown_error(error)),
+        Format::Html => Some(crate::export::html_error(error)),
+    }
+}
+
+/// The call tree as plain lines, without its title or the blank line after.
+pub(crate) fn plain_call_tree(calls: &[Call]) -> Vec<String> {
+    let mut out = String::new();
+    // Writing into a `String` cannot fail.
+    let _ = call_tree(&mut out, calls, &Palette { on: false }, Detail::Budget);
+    out.lines()
+        .skip(1)
+        .map(str::to_string)
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 /// The JSON document: the report itself, pretty-printed because this output
 /// is meant to be read and diffed as well as parsed.
 pub fn json(report: &Report) -> serde_json::Result<String> {
@@ -719,7 +776,7 @@ fn quoted(text: &str) -> String {
 /// …) and the Unicode characters that reorder or hide text would let them
 /// move the cursor, recolour the terminal or forge lines of this report, so
 /// they are shown as escapes instead.
-fn safe(text: &str) -> String {
+pub(crate) fn safe(text: &str) -> String {
     let hostile = |c: char| {
         c.is_control()
             || matches!(
@@ -759,7 +816,7 @@ fn safe(text: &str) -> String {
 /// range a ledger close time can take. A date crate for one line of output
 /// is not worth its weight next to the Soroban host; the edge cases are
 /// pinned by the tests below instead.
-fn utc(timestamp: u64) -> String {
+pub(crate) fn utc(timestamp: u64) -> String {
     let days = (timestamp / 86_400) as i64;
     let secs = timestamp % 86_400;
     let z = days + 719_468;
@@ -781,7 +838,7 @@ fn utc(timestamp: u64) -> String {
 }
 
 /// `1234567` → `1,234,567`.
-fn grouped(n: u64) -> String {
+pub(crate) fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.chars().enumerate() {
@@ -793,7 +850,7 @@ fn grouped(n: u64) -> String {
     out
 }
 
-fn human_bytes(n: u64) -> String {
+pub(crate) fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = n as f64;
     let mut unit = 0;
