@@ -101,7 +101,7 @@ use stellar_xdr::{
 use crate::codec;
 use crate::display;
 use crate::error::{Result, RewindError};
-use crate::history::{self, Past, PastValue, Rebuild};
+use crate::history::{self, Past, PastValue, Rebuild, Unresolved};
 use crate::host::{Entry, FeeSettings, LedgerInfo};
 use crate::rpc::{RawLedgerEntry, RpcClient};
 use crate::tx::DecodedTx;
@@ -610,6 +610,9 @@ pub struct FootprintSlot {
     /// The RPC sent a classic entry without its `extXdr`: it is replayed with
     /// an empty extension, which may make it smaller than it was.
     pub ext_missing: bool,
+    /// Why the entry changed since the transaction and could not be rebuilt
+    /// from ledger metadata, when that is so.
+    pub unresolved: Option<Unresolved>,
 }
 
 /// What decides one slot, besides the entry itself.
@@ -640,6 +643,7 @@ impl FootprintSlot {
             rebuilt: false,
             confirmed: false,
             ext_missing: false,
+            unresolved: past.unresolved,
         };
 
         let mut live_until = raw.and_then(|raw| raw.live_until_ledger_seq);
@@ -1313,6 +1317,7 @@ mod tests {
             value: Some(PastValue::Entry(Box::new(then.clone()))),
             live_until: Some(TX_LEDGER + 20),
             restored_since: false,
+            unresolved: None,
         };
         let slot = FootprintSlot::new(key.clone(), vec![1], Some(&raw), &past, context).unwrap();
         assert_eq!(slot.entry.as_ref(), Some(&then));
@@ -1333,6 +1338,7 @@ mod tests {
             value: Some(PastValue::Absent),
             live_until: None,
             restored_since: false,
+            unresolved: None,
         };
         let slot = FootprintSlot::new(key, vec![1], Some(&raw), &past, context).unwrap();
         assert!(slot.missing() && slot.rebuilt && slot.entry.is_none());
@@ -1354,6 +1360,7 @@ mod tests {
             value: Some(PastValue::Entry(Box::new(then.clone()))),
             live_until: None,
             restored_since: true,
+            unresolved: None,
         };
         let slot = |restorable, refused| {
             let context = SlotContext {

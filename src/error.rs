@@ -38,6 +38,16 @@ pub enum RewindError {
         reason: String,
     },
 
+    /// A `SOROREWIND_*` environment variable holds a value that is not
+    /// valid (`--timeout` and the like are checked by clap).
+    #[error("invalid {name}: {reason}")]
+    InvalidOption {
+        /// The environment variable.
+        name: &'static str,
+        /// Why the value was rejected.
+        reason: String,
+    },
+
     /// The report could not be serialized or written to stdout; holds the cause.
     #[error("could not write the report: {0}")]
     Output(String),
@@ -68,9 +78,10 @@ pub enum RewindError {
         url: String,
         /// The whole cause chain, innermost last.
         detail: String,
-        /// The underlying HTTP client error.
+        /// The underlying HTTP client error; none when the run's deadline
+        /// passed.
         #[source]
-        source: reqwest::Error,
+        source: Option<reqwest::Error>,
     },
 
     /// The `reqwest` client could not be built (for example, no TLS backend).
@@ -360,6 +371,7 @@ impl RewindError {
             RewindError::InvalidHash { .. } => "invalid_hash",
             RewindError::MissingHash => "missing_hash",
             RewindError::InvalidRpcUrl { .. } => "invalid_rpc_url",
+            RewindError::InvalidOption { .. } => "invalid_option",
             RewindError::Output(_) => "output",
             RewindError::FixtureHashMismatch { .. } => "fixture_hash_mismatch",
             RewindError::NotFound { .. } => "not_found",

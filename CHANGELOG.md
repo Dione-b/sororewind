@@ -21,6 +21,24 @@ an incompatible change to the JSON bumps its `schemaVersion`.
   trees differ, and what the RPC left unknown, strongest first. The text
   report prints them under the verdict and says plainly when there are none.
 - New JSON fields, all additive: `probableCauses` and `fee`.
+- Every entry that could not be rebuilt, is missing, or has unknown drift or
+  size carries a machine-readable reason: `footprint.entryStatus` (`status`,
+  `reason`, `detail`), and `footprint.missingEntries` lists the keys of the
+  missing ones (`footprint.missing` is still their count). `-v` prints the
+  reason of each.
+- A match that rests on state that could not be verified says so under the
+  verdict, and `trust` in JSON lists the caveats (`verified`, `caveats`). The
+  README has a "Limitations" section that gathers what a replay can and
+  cannot tell you.
+- `--timeout`, `--retries` and `--deadline` (and `SOROREWIND_TIMEOUT`,
+  `SOROREWIND_RETRIES`, `SOROREWIND_DEADLINE`) tune the RPC calls and cap the
+  whole run; passing the deadline fails with `rpc_unreachable`. A bad
+  environment value is reported as `invalid_option`.
+
+### Changed
+
+- `Retry-After` given as an HTTP date is obeyed, and a rate-limit error
+  inside an HTTP 200 response is retried like an HTTP 429.
 
 ## [0.1.1] - 2026-11-12
 

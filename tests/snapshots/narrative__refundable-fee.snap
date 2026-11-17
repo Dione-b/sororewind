@@ -9,6 +9,8 @@ ledger 5678910 · protocol 30 · 2026-11-11 17:29:53 UTC
 ✓ replay matches network
   on-chain  insufficient refundable fee
   local     insufficient refundable fee
+⚠ the match rests on state that could not be verified:
+  · LiveSorobanStateSizeWindow — network setting changed after the transaction; the replay used its current value
 ⚠ network settings changed since this transaction ran: LiveSorobanStateSizeWindow
 
 where it broke

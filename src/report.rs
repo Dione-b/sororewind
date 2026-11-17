@@ -12,9 +12,11 @@ use stellar_xdr::InvokeHostFunctionResult;
 use crate::culprit::Culprit;
 use crate::display;
 use crate::hash::TxHash;
+use crate::history::Unresolved;
 use crate::replay::{BudgetUse, Fidelity, PrngSeed};
 use crate::state::TtlDrift;
 use crate::story::Story;
+use crate::trust::Trust;
 
 /// Version of the JSON document. Bumped when a field is removed, renamed or
 /// changes meaning; adding fields does not bump it.
@@ -59,6 +61,9 @@ pub struct Report {
     pub fee: FeeReport,
     /// How faithfully the footprint's entries could be put back as they were.
     pub footprint: FootprintReport,
+    /// Whether the result rests on state that could not be verified, and on
+    /// what.
+    pub trust: Trust,
     /// What probably caused a divergence, strongest evidence first; empty on
     /// a match, and when a divergence leaves no evidence to point at.
     pub probable_causes: Vec<Culprit>,
@@ -161,6 +166,13 @@ pub struct FootprintReport {
     pub entries: usize,
     /// Footprint slots the host was handed no entry for.
     pub missing: usize,
+    /// The keys of those slots, rendered for reading; `missing` is their
+    /// count.
+    pub missing_entries: Vec<String>,
+    /// Every entry that is not as plain as it looks, with the machine-readable
+    /// reason: the ones that could not be rebuilt, the missing ones, and the
+    /// ones whose drift or size could not be told. Footprint order.
+    pub entry_status: Vec<EntryStatus>,
     /// Entries written at or after the transaction's own ledger — the value
     /// replayed may not be the value the host saw.
     pub drifted: Vec<String>,
@@ -188,6 +200,83 @@ pub struct FootprintReport {
     pub config_drifted: Vec<String>,
     /// Network settings the RPC returned without a `lastModifiedLedgerSeq`.
     pub config_drift_unknown: Vec<String>,
+}
+
+/// What is uncertain or absent about one footprint entry, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EntryStatus {
+    /// The entry's ledger key, rendered for reading.
+    pub entry: String,
+    /// What kind of problem it is.
+    pub status: EntryStatusKind,
+    /// The reason, as a stable name.
+    pub reason: EntryReason,
+    /// The reason in a sentence.
+    pub detail: String,
+}
+
+/// What kind of problem an [`EntryStatus`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryStatusKind {
+    /// The entry changed since the transaction and could not be rebuilt: the
+    /// replay used its current value.
+    Unresolved,
+    /// The host was handed no entry for it.
+    Missing,
+    /// Whether the entry changed since the transaction is unknown.
+    DriftUnknown,
+    /// A classic entry replayed without its extension.
+    ExtMissing,
+}
+
+/// Why an entry is in the list of [`EntryStatus`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryReason {
+    /// The RPC did not report the transaction's position in its ledger.
+    NoApplyOrder,
+    /// The RPC did not serve the metadata of a ledger the rebuild needed.
+    MetadataUnavailable,
+    /// The entry's history goes back more changes than the rebuild follows.
+    TooManyChanges,
+    /// The ledger metadata is not understood, or contradicts the entry.
+    MetadataUnreadable,
+    /// The RPC has no such entry: it did not exist, or was deleted.
+    Absent,
+    /// A temporary entry past its TTL, which to the host does not exist.
+    Expired,
+    /// The RPC returned the entry without a `lastModifiedLedgerSeq`.
+    NoModificationLedger,
+    /// The RPC returned the classic entry without its `extXdr`.
+    NoExtension,
+}
+
+impl EntryReason {
+    /// The stable name, as it appears in JSON.
+    pub fn name(self) -> &'static str {
+        match self {
+            EntryReason::NoApplyOrder => "no_apply_order",
+            EntryReason::MetadataUnavailable => "metadata_unavailable",
+            EntryReason::TooManyChanges => "too_many_changes",
+            EntryReason::MetadataUnreadable => "metadata_unreadable",
+            EntryReason::Absent => "absent",
+            EntryReason::Expired => "expired",
+            EntryReason::NoModificationLedger => "no_modification_ledger",
+            EntryReason::NoExtension => "no_extension",
+        }
+    }
+}
+
+impl From<Unresolved> for EntryReason {
+    fn from(reason: Unresolved) -> Self {
+        match reason {
+            Unresolved::NoApplyOrder => EntryReason::NoApplyOrder,
+            Unresolved::Unavailable(_) => EntryReason::MetadataUnavailable,
+            Unresolved::TooManyChanges => EntryReason::TooManyChanges,
+            Unresolved::Unreadable => EntryReason::MetadataUnreadable,
+        }
+    }
 }
 
 /// A footprint entry whose TTL changed after the transaction ran.

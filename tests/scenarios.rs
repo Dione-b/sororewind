@@ -816,3 +816,197 @@ async fn events_over_the_network_limit_fail_like_core() {
     let failure = report.story.failure.as_ref().unwrap();
     assert!(failure.message.contains("events size"), "{failure:?}");
 }
+
+use sororewind::report::{EntryReason, EntryStatus, EntryStatusKind};
+
+fn statuses(report: &Report, kind: EntryStatusKind) -> Vec<&EntryStatus> {
+    report
+        .footprint
+        .entry_status
+        .iter()
+        .filter(|status| status.status == kind)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_missing_entry_is_listed_with_its_reason() {
+    // The fixture's footprint holds one key the RPC has no entry for.
+    let report = replay(Overlay::on(FIXTURE).await).await;
+    assert_eq!(report.footprint.missing, 1);
+    assert_eq!(report.footprint.missing_entries.len(), 1);
+    let [missing] = statuses(&report, EntryStatusKind::Missing)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(missing.entry, report.footprint.missing_entries[0]);
+    assert_eq!(missing.reason, EntryReason::Absent);
+
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["footprint"]["missing"], 1);
+    assert_eq!(
+        json["footprint"]["missingEntries"][0],
+        missing.entry.as_str()
+    );
+    let status = json["footprint"]["entryStatus"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|status| status["status"] == "missing")
+        .unwrap();
+    assert_eq!(status["reason"], "absent");
+}
+
+/// The account entry of the fixture's footprint, as a response key.
+fn classic_entry_key() -> String {
+    let path = common::fixture_dir(FIXTURE).join("ledgerEntries.json");
+    let store: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    store["entries"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .find(|key| {
+            matches!(
+                codec::decode::<LedgerKey>(key, "a ledger key").unwrap(),
+                LedgerKey::Account(_)
+            )
+        })
+        .expect("the fixture's footprint has no account")
+        .clone()
+}
+
+#[tokio::test]
+async fn an_entry_the_rpc_left_vague_says_what_is_unknown() {
+    let key = classic_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+    let report = replay(Overlay::on(FIXTURE).await.rewrite_result(
+        "getLedgerEntries",
+        move |result| {
+            for entry in result["entries"].as_array_mut().unwrap() {
+                if entry["key"] == key.as_str() {
+                    let entry = entry.as_object_mut().unwrap();
+                    entry.remove("lastModifiedLedgerSeq");
+                    entry.remove("extXdr");
+                }
+            }
+        },
+    ))
+    .await;
+
+    let [unknown] = statuses(&report, EntryStatusKind::DriftUnknown)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(unknown.entry, label);
+    assert_eq!(unknown.reason, EntryReason::NoModificationLedger);
+    let [ext] = statuses(&report, EntryStatusKind::ExtMissing)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(
+        (ext.entry.as_str(), ext.reason),
+        (label.as_str(), EntryReason::NoExtension)
+    );
+}
+
+#[tokio::test]
+async fn an_entry_that_could_not_be_rebuilt_says_why() {
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    let key = persistent_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+
+    // The entry changed after the transaction, but the recorded ledger
+    // metadata holds no change to it: the metadata contradicts the entry.
+    let report = replay(Overlay::on(FIXTURE).await.rewrite_result(
+        "getLedgerEntries",
+        modified_at(key.clone(), plain.ledger + 1),
+    ))
+    .await;
+    let [unresolved] = statuses(&report, EntryStatusKind::Unresolved)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(unresolved.entry, label);
+    assert_eq!(unresolved.reason, EntryReason::MetadataUnreadable);
+    assert!(report.footprint.rebuild_note.is_some(), "the note stays");
+
+    // Without the transaction's position in its ledger, changes made after it
+    // in that ledger cannot be told from earlier ones.
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getLedgerEntries", modified_at(key, plain.ledger + 1))
+            .rewrite_result("getTransaction", |result| {
+                result.as_object_mut().unwrap().remove("applicationOrder");
+            }),
+    )
+    .await;
+    // Every drifted entry is in the same position, the one the overlay
+    // drifted among them.
+    let unresolved = statuses(&report, EntryStatusKind::Unresolved);
+    assert!(unresolved.iter().any(|status| status.entry == label));
+    assert!(
+        unresolved
+            .iter()
+            .all(|status| status.reason == EntryReason::NoApplyOrder)
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(
+        json["footprint"]["entryStatus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|status| status["status"] == "unresolved" && status["reason"] == "no_apply_order")
+    );
+}
+
+#[tokio::test]
+async fn a_match_over_unverified_state_says_so() {
+    // Plain fixture: nothing unverified, nothing said.
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    assert!(plain.trust.verified && plain.trust.caveats.is_empty());
+    let text = sororewind::render::human(&plain, false, sororewind::render::Detail::Summary);
+    assert!(!text.contains("could not be verified"), "{text}");
+
+    // The RPC leaves out when an entry last changed, and the apply order.
+    let key = classic_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getLedgerEntries", move |result| {
+                for entry in result["entries"].as_array_mut().unwrap() {
+                    if entry["key"] == key.as_str() {
+                        entry
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("lastModifiedLedgerSeq");
+                    }
+                }
+            })
+            .rewrite_result("getTransaction", |result| {
+                result.as_object_mut().unwrap().remove("applicationOrder");
+            }),
+    )
+    .await;
+
+    // Still a match: the contract does not draw random numbers.
+    assert_eq!(report.outcome(), Outcome::Matched);
+    assert!(!report.trust.verified);
+    let kinds: Vec<_> = report.trust.caveats.iter().map(|c| c.kind).collect();
+    assert!(kinds.contains(&sororewind::trust::CaveatKind::EntryDriftUnknown));
+    assert!(kinds.contains(&sororewind::trust::CaveatKind::PrngSeedFixed));
+
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["trust"]["verified"], false);
+    let caveat = json["trust"]["caveats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|caveat| caveat["kind"] == "entry_drift_unknown")
+        .unwrap();
+    assert_eq!(caveat["subject"], label.as_str());
+
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(
+        text.contains("✓ replay matches network")
+            && text.contains("⚠ the match rests on state that could not be verified:"),
+        "{text}"
+    );
+    assert!(text.contains(&label), "{text}");
+}

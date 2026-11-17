@@ -25,6 +25,12 @@ call tree
 CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer(GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000)  ✗
 ```
 
+**Contents:** [Install](#install) · [Quick start](#quick-start) ·
+[Reading the output](#reading-the-output) · [Options](#options) ·
+[JSON output](#json-output) · [Limitations](#limitations) ·
+[Why a replay can diverge](#why-a-replay-can-diverge) ·
+[Contributing](#contributing)
+
 ## Why
 
 Your transaction failed. The network hands you a result code, a wall of
@@ -120,8 +126,11 @@ A few things worth knowing:
   `SOROREWIND_RPC_URL` so it stays out of your shell history and process list.
   Either way, sororewind only ever prints the scheme and host
   (`https://rpc.provider.io/…`).
-- **Flaky RPCs are expected.** Connection errors, timeouts and HTTP 429, 502,
-  503 and 504 are retried a few times before giving up. Responses are
+- **Flaky RPCs are expected.** Connection errors, timeouts, HTTP 429, 502, 503
+  and 504, and rate-limit errors (even inside an HTTP 200) are retried a few
+  times before giving up, waiting as long as a `Retry-After` header asks (a
+  number of seconds or an HTTP date, up to 10 seconds). `--timeout`,
+  `--retries` and `--deadline` tune this ([Options](#options)). Responses are
   requested gzip-compressed, which keeps the ledger metadata it downloads small.
 
 ## Reading the output
@@ -132,7 +141,7 @@ it has something to say, or when you ask for more.
 | Section | What it tells you |
 |---------|-------------------|
 | **Header** | The hash, the network, and the ledger it ran in, with protocol and close time. |
-| **Verdict** | `✓ replay matches network`: trust everything below. `⚠ replay diverged`: the local run disagrees, and the line says how (another result code, or the same code with another error, resource fee or events). On a divergence, `probably caused by:` lists the changed entries and settings, and the first call where the two runs differ, strongest first; when there are none it says so. A separate warning appears if the network's settings changed since. |
+| **Verdict** | `✓ replay matches network`: trust everything below. `⚠ replay diverged`: the local run disagrees, and the line says how (another result code, or the same code with another error, resource fee or events). On a divergence, `probably caused by:` lists the changed entries and settings, and the first call where the two runs differ, strongest first; when there are none it says so. A separate warning appears if the network's settings changed since. A match that rests on state that could not be verified says so right under it (see [Limitations](#limitations)). |
 | **Where it broke** | The error that ended it: its type (contract, auth, storage, budget, …), the contract's own error name when it declares one, the logged message, and the function and call depth that raised it. |
 | **Call tree** | Every contract call, in order, with decoded arguments. Nested calls hang off `├─` / `└─`, `✗` marks the failing call, and `·` lines are the contract's logs. `(recovered by try_call)` marks a failure the caller caught and moved past; `(no return)` marks a call the transaction died inside. |
 | **Footprint** | How many entries were touched, which changed since (value, TTL, archived), how many were missing, and whether the random seed was derived or fixed. Shown on a divergence, and always with `-v`. |
@@ -167,6 +176,9 @@ nothing else.
 |--------|-------------|
 | `-n, --network <NETWORK>` | `testnet` (default), `mainnet`, `futurenet`, or `local` (a quickstart or standalone node). Picks the default RPC. |
 | `--rpc-url <URL>` | Use this RPC instead. Must be `http://` or `https://`; `SOROREWIND_RPC_URL` sets it from the environment. |
+| `--timeout <SECONDS>` | How long one RPC request may take before it is abandoned and retried (1 to 3600, default 30). `SOROREWIND_TIMEOUT` sets it from the environment. |
+| `--retries <N>` | How many times a failed RPC call is retried (0 to 10, default 3; `0` never retries). `SOROREWIND_RETRIES` sets it. |
+| `--deadline <SECONDS>` | How long the whole run may spend on the RPC, retries and waits included (1 to 86400; default none). A call still going then fails with `rpc_unreachable`. `SOROREWIND_DEADLINE` sets it. |
 | `--json` | Print a JSON document instead of the narrative. |
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
 | `--color <auto\|always\|never>` | `auto` (default) colours a terminal and honours a non-empty `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb`. Use `always` in a pager: `sororewind … --color always \| less -R`. |
@@ -204,7 +216,9 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 | `result.onchain`, `result.local` | Each side's result, as `{ code, resultHash }`. |
 | `failure` | The error that ended it, with its contract, function and depth; `null` when there is none. `failure.cause` is the contract error a host error answered, when there is one. |
 | `calls` | The call tree, one entry per call, with arguments, return value and logs. `args` and `returned` are shortened for reading; `argsXdr` and `returnedXdr` hold them whole, as base64 `ScVal` XDR. |
+| `trust` | `verified` is `true` when every input was verified and everything the network recorded was compared. Otherwise `caveats` lists what was not, as `{ kind, subject, detail }`: see [Limitations](#limitations). |
 | `budget`, `footprint`, `prngSeed` | Resource use, the footprint and its drift, and how the random seed was obtained. |
+| `footprint.missingEntries`, `footprint.entryStatus` | The keys of the entries the host was handed none for (`footprint.missing` is their count), and every entry that could not be rebuilt, is missing, or has unknown drift or size, each with a stable `reason`: `{ entry, status, reason, detail }`. `status` is `unresolved`, `missing`, `drift_unknown` or `ext_missing`; `reason` is `no_apply_order`, `metadata_unavailable`, `too_many_changes`, `metadata_unreadable`, `absent`, `expired`, `no_modification_ledger` or `no_extension`. `-v` prints them. |
 | `diagnostics` | On-chain and local diagnostic events, one line each (`onchain`, `local`) and as base64 `DiagnosticEvent` XDR (`onchainXdr`, `localXdr`). |
 
 Enum-like values are lower `snake_case` everywhere (`"status": "failed"`,
@@ -224,8 +238,9 @@ next to the message on stderr:
 
 `kind` is stable: `not_found`, `not_a_failure`, `not_soroban`,
 `never_reached_host`, `protocol_mismatch`, `network_mismatch`,
-`ledger_unavailable`, `rpc_unreachable`, `rpc_error`, plus a few for malformed
-responses and fixtures. Invalid arguments are reported by the argument parser,
+`ledger_unavailable`, `rpc_unreachable` (also when `--deadline` passes),
+`rpc_error`, `invalid_option` (a bad `SOROREWIND_*` variable), plus a few for
+malformed responses and fixtures. Invalid arguments are reported by the argument parser,
 as text.
 
 ## Why a replay can diverge
@@ -296,6 +311,47 @@ Some transactions are out of reach. sororewind exits `1` and says why:
 
 sororewind replays and explains. It doesn't suggest fixes or profile
 contracts: that part is up to you.
+
+## Limitations
+
+What a replay can and cannot tell you, in one place. The details are in the
+sections linked.
+
+**What a match guarantees.** `✓ replay matches network` means the same
+Soroban host, fed the state sororewind rebuilt, ended with the same result
+and error the network recorded, charged the same non-refundable resource fee
+and left the same start of diagnostic events. It does not mean the state was
+the one the transaction saw: entries are rebuilt from ledger metadata where
+possible, and otherwise replayed as they are now.
+
+**When a match rests on weak ground.** The report says so, under the verdict
+(`⚠ the match rests on state that could not be verified`) and in `trust` in
+JSON, when the result depends on:
+
+- an entry that changed since the transaction and could not be rebuilt, or
+  whose last change the RPC did not report;
+- a network setting that changed since, or whose change time is unknown;
+- an archived entry whose archived state is taken from the network's result;
+- a classic entry the RPC returned without its extension;
+- a random seed made up because the apply order was unknown;
+- a network that kept no diagnostics or fee breakdown, so the error, the call
+  trace or the fee were not compared.
+
+**What is not compared.** CPU, memory, rent and ledger changes are not part
+of the verdict ([why](#why-a-replay-can-diverge)).
+
+**Which transactions it can replay.** Only failures that reached the host, on
+a protocol one of the embedded hosts executes, still inside the RPC's
+retention window ([which protocols](#which-transactions-it-can-replay),
+[when it can't replay at all](#when-it-cant-replay-at-all)).
+
+**Why a replay can diverge.** The state moved on and could not be rebuilt,
+rent is priced from a moving window, or the apply order is unknown: see
+[Why a replay can diverge](#why-a-replay-can-diverge). A divergence lists its
+probable causes.
+
+sororewind replays and explains. It doesn't suggest fixes or profile
+contracts.
 
 ## Contributing
 

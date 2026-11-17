@@ -129,8 +129,19 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
     "driftUnknown": [],
     "drifted": [],
     "entries": 4,
+    "entryStatus": [
+      {
+        "detail": "the RPC has no such entry, so the host was handed none",
+        "entry": "contract data G…SCWC <nonce 1082260681902037437> (temporary)",
+        "reason": "absent",
+        "status": "missing"
+      }
+    ],
     "extMissing": [],
     "missing": 1,
+    "missingEntries": [
+      "contract data G…SCWC <nonce 1082260681902037437> (temporary)"
+    ],
     "rebuildNote": null,
     "rebuilt": [],
     "ttlDrifted": []
@@ -153,5 +164,9 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
   },
   "rpc": "<fixture>",
   "schemaVersion": 1,
-  "status": "failed"
+  "status": "failed",
+  "trust": {
+    "caveats": [],
+    "verified": true
+  }
 }

@@ -265,7 +265,9 @@ fn fidelity(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
         "{}",
         p.dim(&format!("  on-chain  {onchain}\n  local     {local}"))
     )?;
-    if !report.fidelity.matches {
+    if report.fidelity.matches {
+        caveats(out, report, p)?;
+    } else {
         probable_causes(out, report, p)?;
     }
     if !report.footprint.config_drifted.is_empty() {
@@ -299,6 +301,42 @@ fn fidelity(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
         )?;
     }
     writeln!(out)
+}
+
+/// What a match rests on that could not be verified, when there is any.
+fn caveats(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
+    let caveats = &report.trust.caveats;
+    if caveats.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "{}",
+        p.yellow("⚠ the match rests on state that could not be verified:")
+    )?;
+    for caveat in caveats.iter().take(CAUSE_LINES) {
+        let subject = if caveat.subject.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", safe(&caveat.subject))
+        };
+        writeln!(
+            out,
+            "  · {subject}{}",
+            p.dim(&format!("— {}", caveat.detail))
+        )?;
+    }
+    if caveats.len() > CAUSE_LINES {
+        writeln!(
+            out,
+            "  {}",
+            p.dim(&format!(
+                "… and {} more (--json lists them all)",
+                caveats.len() - CAUSE_LINES
+            ))
+        )?;
+    }
+    Ok(())
 }
 
 /// What probably explains a divergence, or a plain statement that nothing in
@@ -589,6 +627,19 @@ fn drift(out: &mut impl Write, report: &Report, p: &Palette, detail: Detail) -> 
     }
     if let Some(note) = &f.rebuild_note {
         writeln!(out, "  {}", p.yellow(note))?;
+    }
+    // The reason behind each flagged entry, for whoever wants to know which
+    // one failed and why.
+    if detail >= Detail::Budget {
+        for status in &f.entry_status {
+            writeln!(
+                out,
+                "  {} {} {}",
+                p.dim("why:"),
+                safe(&status.entry),
+                p.dim(&format!("({}) — {}", status.reason.name(), status.detail))
+            )?;
+        }
     }
     // What was rebuilt is the replay working as intended: detail, not a warning.
     if detail >= Detail::Budget {

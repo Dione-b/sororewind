@@ -36,6 +36,7 @@ pub mod state;
 pub mod story;
 pub mod strkey;
 pub mod transport;
+pub mod trust;
 pub mod tx;
 
 #[cfg(test)]

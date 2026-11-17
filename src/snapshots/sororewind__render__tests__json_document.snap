@@ -112,6 +112,8 @@ expression: json(&sample_report()).unwrap()
   "footprint": {
     "entries": 4,
     "missing": 1,
+    "missingEntries": [],
+    "entryStatus": [],
     "drifted": [
       "account GAAA"
     ],
@@ -129,6 +131,10 @@ expression: json(&sample_report()).unwrap()
     "extMissing": [],
     "configDrifted": [],
     "configDriftUnknown": []
+  },
+  "trust": {
+    "verified": true,
+    "caveats": []
   },
   "probableCauses": [],
   "prngSeed": "derived",

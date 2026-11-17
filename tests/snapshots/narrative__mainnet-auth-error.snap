@@ -9,6 +9,9 @@ ledger 65424472 · protocol 29 · 2026-11-11 14:46:42 UTC
 ✓ replay matches network
   on-chain  trapped
   local     trapped
+⚠ the match rests on state that could not be verified:
+  · account GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR — changed after the transaction; the replay used its current value (not rebuilt: their history goes back more than 24 changes from the current state)
+  · trustline GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR USDC:G…KZVN — changed after the transaction; the replay used its current value (not rebuilt: their history goes back more than 24 changes from the current state)
 
 where it broke
   auth error ExistingValue

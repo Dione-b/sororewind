@@ -624,6 +624,10 @@ pub fn sample_report() -> Report {
             onchain_refundable: Some(0),
             onchain_rent: Some(0),
         },
+        trust: crate::trust::Trust {
+            verified: true,
+            caveats: Vec::new(),
+        },
         probable_causes: Vec::new(),
         footprint: FootprintReport {
             entries: 4,
