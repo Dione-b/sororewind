@@ -10,6 +10,11 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ### Added
 
+- A live run on a terminal shows the stage it is in on stderr (fetching the
+  transaction, fetching entries, rebuilding state, replaying). `--no-progress`
+  turns it off; it is also off with `--json`, `-v`, `--fixture` and when
+  stderr is not a terminal. Library callers get the same stages through
+  `run_with_progress` and the `Progress` trait.
 - Errors name the stage of the run they come from: `error.stage` in the JSON
   error document (`input`, `fetch`, `decode`, `reconstruct`, `replay` or
   `output`, an additive field) and a `[stage]` prefix on the stderr message.

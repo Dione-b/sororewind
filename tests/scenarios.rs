@@ -1010,3 +1010,36 @@ async fn a_match_over_unverified_state_says_so() {
     );
     assert!(text.contains(&label), "{text}");
 }
+
+/// A run reports each stage, in order, and nothing else.
+#[tokio::test]
+async fn a_run_reports_its_stages_in_order() {
+    use std::sync::Mutex;
+
+    use sororewind::{Progress, Step};
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<Step>>);
+    impl Progress for Recorder {
+        fn step(&self, step: Step) {
+            self.0.lock().unwrap().push(step);
+        }
+    }
+
+    let recorder = Recorder::default();
+    let request = common::request(FIXTURE).await;
+    let report =
+        sororewind::run_with_progress(&Overlay::on(FIXTURE).await.client(), &request, &recorder)
+            .await
+            .unwrap();
+    assert_eq!(report.outcome(), Outcome::Matched);
+
+    let steps = recorder.0.into_inner().unwrap();
+    assert_eq!(steps.len(), 4, "{steps:?}");
+    assert_eq!(steps[0], Step::FetchingTransaction);
+    assert!(
+        matches!(steps[1], Step::FetchingEntries { count } if count > 0),
+        "{steps:?}"
+    );
+    assert_eq!(&steps[2..], [Step::RebuildingHistory, Step::Replaying]);
+}

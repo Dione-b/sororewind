@@ -183,6 +183,7 @@ nothing else.
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
 | `--color <auto\|always\|never>` | `auto` (default) colours a terminal and honours a non-empty `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb`. Use `always` in a pager: `sororewind … --color always \| less -R`. |
 | `--no-color` | Same as `--color never`. |
+| `--no-progress` | A live run prints the stage it is in on stderr (`sororewind: fetching the transaction…`) when stderr is a terminal. This turns it off; it is also off with `--json`, `-v` and `--fixture`. |
 | `-v, --verbose` | More detail; repeat for even more (`-vv`). |
 | `--fixture <DIR>` | Replay offline from a recorded fixture. The hash is optional (the fixture knows it); a different one is an error. Not combinable with `--rpc-url`. |
 | `--completions <SHELL>` | Print a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`, e.g. `sororewind --completions fish > ~/.config/fish/completions/sororewind.fish`. |

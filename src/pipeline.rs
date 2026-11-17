@@ -13,6 +13,7 @@ use crate::error::{Result, Retention, RewindError};
 use crate::findings;
 use crate::hash::TxHash;
 use crate::network::{Network, NetworkId};
+use crate::progress::{Progress, Silent, Step};
 use crate::replay::{self, Fidelity, ReplayOutcome};
 use crate::report::{
     Diagnostics, EntryReason, EntryStatus, EntryStatusKind, FeeReport, FootprintReport, Report,
@@ -43,15 +44,30 @@ pub struct Request {
 /// decode, reconstruct the ledger state, replay, compare with what the
 /// network recorded, and narrate the outcome.
 pub async fn run(rpc: &RpcClient, request: &Request) -> Result<Report> {
+    run_with_progress(rpc, request, &Silent).await
+}
+
+/// [`run`], telling `progress` each stage as the run enters it.
+pub async fn run_with_progress(
+    rpc: &RpcClient,
+    request: &Request,
+    progress: &dyn Progress,
+) -> Result<Report> {
+    progress.step(Step::FetchingTransaction);
     let fetched = fetch(rpc, request).await?;
     let tx = tx::decode(&request.hash, &fetched.raw)?;
+    progress.step(Step::FetchingEntries {
+        count: tx.footprint_keys().len(),
+    });
     // The header and the entries do not depend on each other: one round trip.
     let (ledger, entries) = tokio::try_join!(
         state::read_ledger(rpc, tx.ledger, &fetched.passphrase),
         state::fetch(rpc, &tx),
     )?;
     let host = embedded_host(&tx, &ledger, &fetched.network)?;
+    progress.step(Step::RebuildingHistory);
     let state = state::reconstruct(rpc, &tx, &ledger, entries).await?;
+    progress.step(Step::Replaying);
     let outcome = replay::replay(host, &tx, &state, &ledger)?;
     let fidelity = replay::compare(&tx, &outcome);
     let story = narrate(rpc, request, &state, &outcome).await?;

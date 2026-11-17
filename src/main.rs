@@ -5,10 +5,12 @@
 // output reaches the terminal.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::error::ErrorKind;
 use sororewind::cli::Cli;
+use sororewind::progress::{Progress, Silent, Step};
 use sororewind::render::{self, Detail};
 use sororewind::{Report, Result};
 
@@ -45,9 +47,24 @@ fn init_logging(verbose: u8) {
     });
 }
 
+/// Shows each stage of a live run on stderr, one line each.
+struct StderrProgress;
+
+impl Progress for StderrProgress {
+    fn step(&self, step: Step) {
+        eprintln!("sororewind: {step}…");
+    }
+}
+
 async fn run(cli: &Cli) -> Result<Report> {
     let connection = cli.connect().await?;
-    let result = sororewind::run(&connection.rpc, &connection.request).await;
+    let progress: &dyn Progress = if cli.show_progress(std::io::stderr().is_terminal()) {
+        &StderrProgress
+    } else {
+        &Silent
+    };
+    let result =
+        sororewind::run_with_progress(&connection.rpc, &connection.request, progress).await;
     if let Some(recording) = &connection.recording {
         // Only a run that got as far as a report is a fixture worth having:
         // anything else would replay as a different error, or as another
