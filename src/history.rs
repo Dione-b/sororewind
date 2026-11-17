@@ -145,6 +145,9 @@ pub struct Past {
     /// `live_until` is known, the TTL it had when the transaction ran is lost
     /// just as for an entry archived now.
     pub restored_since: bool,
+    /// Why the entry was left as it is now although it changed since the
+    /// transaction; `None` for an entry that was rebuilt or did not change.
+    pub unresolved: Option<Unresolved>,
 }
 
 /// The outcome of a rebuild: one [`Past`] per footprint key.
@@ -475,18 +478,25 @@ fn first_change<'a>(changes: &'a LedgerChanges, key: &[u8]) -> Option<&'a Ledger
         .find(|change| change_key(change).is_some_and(|k| k == key))
 }
 
-/// Why an entry was left as it is now.
+/// Why an entry that changed since the transaction was left as it is now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Unresolved {
+pub enum Unresolved {
+    /// The RPC did not report the transaction's position in its ledger, so
+    /// changes made after it in its own ledger cannot be told from earlier
+    /// ones.
     NoApplyOrder,
     /// The RPC did not serve the metadata of this ledger.
     Unavailable(u32),
+    /// The entry's history goes back further than [`BACKWARD_HOPS`] changes.
     TooManyChanges,
+    /// The metadata records the entry's changes in a way that is not
+    /// understood, or contradicts the entry.
     Unreadable,
 }
 
 impl Unresolved {
-    fn describe(self) -> String {
+    /// The reason in the words a person would use.
+    pub fn describe(self) -> String {
         match self {
             Unresolved::NoApplyOrder => {
                 "the RPC did not report the transaction's position in its ledger".to_string()
@@ -558,6 +568,9 @@ pub async fn rebuild(
         .and_then(|order| order.checked_sub(1))
     else {
         rebuild.note = note(drifted.len(), &[Unresolved::NoApplyOrder]);
+        for &index in &drifted {
+            rebuild.past[index].unresolved = Some(Unresolved::NoApplyOrder);
+        }
         return rebuild;
     };
 
@@ -644,6 +657,7 @@ pub async fn rebuild(
             Some(Found::Value(value)) => past.value = Some(value.clone()),
             Some(Found::Unusable) if drifted.contains(&index) => {
                 unresolved.push(Unresolved::Unreadable);
+                past.unresolved = Some(Unresolved::Unreadable);
             }
             Some(Found::Unusable) | None => {}
         }
@@ -665,7 +679,9 @@ pub async fn rebuild(
         if covered_until == target.ledger {
             // Not even the transaction's own ledger could be read, so changes
             // made in it after the transaction cannot be told from earlier ones.
-            unresolved.push(own_ledger_failure.unwrap_or(Unresolved::Unavailable(target.ledger)));
+            let reason = own_ledger_failure.unwrap_or(Unresolved::Unavailable(target.ledger));
+            unresolved.push(reason);
+            rebuild.past[index].unresolved = Some(reason);
             continue;
         }
         let mut at = match last_modified(index) {
@@ -738,7 +754,10 @@ pub async fn rebuild(
         };
         match outcome {
             Ok(entry) => rebuild.past[index].value = Some(PastValue::Entry(Box::new(entry))),
-            Err(reason) => unresolved.push(reason),
+            Err(reason) => {
+                unresolved.push(reason);
+                rebuild.past[index].unresolved = Some(reason);
+            }
         }
     }
 
@@ -1083,6 +1102,7 @@ mod tests {
                 value: Some(PastValue::Entry(Box::new(then))),
                 live_until: Some(N + 40),
                 restored_since: false,
+                unresolved: None,
             }
         );
         assert_eq!(rebuilt.note, None);
@@ -1142,7 +1162,13 @@ mod tests {
         // Only the transaction's own ledger must be served.
         let (behind, _) = rpc(Vec::new(), N - 1);
         let (past, note) = rebuild_one(&behind, &now, None).await;
-        assert_eq!(past, Past::default());
+        assert_eq!(
+            past,
+            Past {
+                unresolved: Some(Unresolved::Unavailable(N)),
+                ..Past::default()
+            }
+        );
         assert!(note.unwrap().contains(&format!("ledger {N} ")));
     }
 
@@ -1173,6 +1199,11 @@ mod tests {
 
     #[tokio::test]
     async fn what_cannot_be_rebuilt_is_left_alone_and_explained() {
+        // Each reason is kept with the entry, next to the note.
+        let unresolved = |reason| Past {
+            unresolved: Some(reason),
+            ..Past::default()
+        };
         let now = account_entry([1; 32], N + 300);
 
         // The RPC has no metadata at all.
@@ -1180,7 +1211,7 @@ mod tests {
             MemoryTransport::new().on("getLedgers", &json!({"error": {"message": "pruned"}})),
         );
         let (past, note) = rebuild_one(&none, &now, None).await;
-        assert_eq!(past, Past::default());
+        assert_eq!(past, unresolved(Unresolved::Unavailable(N)));
         let note = note.unwrap();
         assert!(
             note.starts_with("1 drifted entry could not be rebuilt from ledger metadata")
@@ -1191,7 +1222,7 @@ mod tests {
         // The ledger of the last change is gone.
         let (gone, _) = rpc(Vec::new(), N + 200);
         let (past, note) = rebuild_one(&gone, &now, None).await;
-        assert_eq!(past, Past::default());
+        assert_eq!(past, unresolved(Unresolved::Unavailable(N + 300)));
         assert!(note.unwrap().contains(&format!("ledger {}", N + 300)));
 
         // A `created` record says nothing about what came before it.
@@ -1205,7 +1236,7 @@ mod tests {
         )];
         let (rpc_created, _) = rpc(created, N + 1_000);
         let (past, note) = rebuild_one(&rpc_created, &now, None).await;
-        assert_eq!(past, Past::default());
+        assert_eq!(past, unresolved(Unresolved::Unreadable));
         assert!(note.unwrap().contains("not understood"));
 
         // More hops than the walk allows.
@@ -1222,7 +1253,7 @@ mod tests {
         let last = N + 100 * (BACKWARD_HOPS + 1);
         let (long, _) = rpc(chain, last + 10);
         let (past, note) = rebuild_one(&long, &at(&now, last), None).await;
-        assert_eq!(past, Past::default());
+        assert_eq!(past, unresolved(Unresolved::TooManyChanges));
         assert!(note.unwrap().contains("more than"));
     }
 
@@ -1242,6 +1273,7 @@ mod tests {
         )
         .await;
         assert!(rebuilt.note.unwrap().contains("position in its ledger"));
+        assert_eq!(rebuilt.past[0].unresolved, Some(Unresolved::NoApplyOrder));
         assert!(calls.lock().unwrap().is_empty());
     }
 

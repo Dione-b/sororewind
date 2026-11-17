@@ -10,6 +10,8 @@ mod common;
 
 use serde_json::Value;
 use sororewind::codec;
+use sororewind::culprit::CulpritKind;
+use sororewind::replay::Divergence;
 use sororewind::report::Report;
 use sororewind::{Network, Outcome, RewindError};
 use stellar_xdr::{
@@ -462,4 +464,549 @@ async fn the_stellar_asset_contract_error_is_named() {
     assert_eq!(failure.name.as_deref(), Some("BalanceError"));
     // The message keeps the values the contract reported.
     assert!(failure.message.contains('['), "{}", failure.message);
+}
+
+/// Rewrite the recorded `resultMetaXdr` of `getTransaction`.
+fn edit_meta(result: &mut Value, edit: impl FnOnce(&mut stellar_xdr::TransactionMetaV4)) {
+    let mut meta: stellar_xdr::TransactionMeta =
+        codec::decode(result["resultMetaXdr"].as_str().unwrap(), "resultMetaXdr").unwrap();
+    let stellar_xdr::TransactionMeta::V4(v4) = &mut meta else {
+        panic!("the fixture's meta is not a v4 one");
+    };
+    edit(v4);
+    result["resultMetaXdr"] = b64(&meta).into();
+}
+
+#[tokio::test]
+async fn a_fee_the_network_charged_differently_is_a_divergence() {
+    // Same result, same error, but the non-refundable fee the network
+    // recorded is not the one the declared resources cost.
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    assert_eq!(plain.outcome(), Outcome::Matched);
+    assert_eq!(
+        plain.fee.onchain_non_refundable,
+        Some(plain.fee.local_non_refundable)
+    );
+
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", |result| {
+                edit_meta(result, |meta| {
+                    let Some(soroban) = &mut meta.soroban_meta else {
+                        panic!("the fixture's meta has no Soroban part");
+                    };
+                    let stellar_xdr::SorobanTransactionMetaExt::V1(fees) = &mut soroban.ext else {
+                        panic!("the fixture's meta has no fee breakdown");
+                    };
+                    fees.total_non_refundable_resource_fee_charged += 1;
+                });
+            }),
+    )
+    .await;
+
+    assert_eq!(report.outcome(), Outcome::Diverged);
+    assert_eq!(report.fidelity.divergence, Some(Divergence::Fee));
+    assert_eq!(
+        report.fee.onchain_non_refundable,
+        Some(plain.fee.local_non_refundable + 1)
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["fidelity"]["divergence"], "fee");
+    assert_eq!(
+        json["fee"]["localNonRefundable"],
+        plain.fee.local_non_refundable
+    );
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(
+        text.contains("same result, different resource fee"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_meta_without_a_fee_breakdown_compares_no_fee() {
+    // Older meta carries no breakdown: nothing to compare, and not a verdict.
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", |result| {
+                edit_meta(result, |meta| {
+                    if let Some(soroban) = &mut meta.soroban_meta {
+                        soroban.ext = stellar_xdr::SorobanTransactionMetaExt::V0;
+                    }
+                });
+            }),
+    )
+    .await;
+    assert_eq!(report.outcome(), Outcome::Matched);
+    assert_eq!(report.fee.onchain_non_refundable, None);
+}
+
+#[tokio::test]
+async fn events_the_network_never_recorded_are_a_divergence() {
+    // The network's call trace departs from the replay's at its first event.
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", |result| {
+                edit_meta(result, |meta| {
+                    let mut events = meta.diagnostic_events.to_vec();
+                    events[0].in_successful_contract_call = !events[0].in_successful_contract_call;
+                    meta.diagnostic_events = events.try_into().unwrap();
+                });
+            }),
+    )
+    .await;
+
+    assert_eq!(report.outcome(), Outcome::Diverged);
+    assert_eq!(report.fidelity.divergence, Some(Divergence::Events));
+    // Nothing the run knows of changed, and the report says so rather than
+    // guessing.
+    assert!(report.probable_causes.is_empty());
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(text.contains("same result, different events"), "{text}");
+    assert!(
+        text.contains("nothing in this run explains the divergence"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_replay_that_stopped_early_is_not_an_events_divergence() {
+    // The replay's own events are the start of the network's, which keeps
+    // core's trailing diagnostics: every recorded fixture relies on this.
+    let report = replay(Overlay::on(FIXTURE).await).await;
+    assert!(report.diagnostics.local.len() < report.diagnostics.onchain.len());
+    assert_eq!(report.outcome(), Outcome::Matched);
+}
+
+/// Rewrite `getLedgerEntries` as if `key` had last been written at `ledger`.
+fn modified_at(key: String, ledger: u32) -> impl Fn(&mut Value) + Send + Sync + 'static {
+    move |result| {
+        for entry in result["entries"].as_array_mut().unwrap() {
+            if entry["key"] == key.as_str() {
+                entry["lastModifiedLedgerSeq"] = ledger.into();
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_divergence_names_the_entry_that_drifted() {
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    let key = persistent_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+
+    // The entry was written after the transaction, and the network's
+    // recorded result is one the replay no longer reproduces.
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getLedgerEntries", modified_at(key, plain.ledger + 1))
+            .rewrite_result("getTransaction", |result| {
+                failed_before_the_host(result, InvokeHostFunctionResult::ResourceLimitExceeded);
+            }),
+    )
+    .await;
+
+    assert_eq!(report.outcome(), Outcome::Diverged);
+    let first = report
+        .probable_causes
+        .first()
+        .expect("a drifted entry is a candidate");
+    assert_eq!(first.kind, CulpritKind::EntryDrifted);
+    assert_eq!(first.subject, label);
+
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["probableCauses"][0]["kind"], "entry_drifted");
+    assert_eq!(json["probableCauses"][0]["subject"], label.as_str());
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(text.contains("probably caused by:"), "{text}");
+    assert!(text.contains(&format!("1. {label}")), "{text}");
+}
+
+#[tokio::test]
+async fn a_divergence_with_no_evidence_says_so() {
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", |result| {
+                failed_before_the_host(result, InvokeHostFunctionResult::ResourceLimitExceeded);
+            }),
+    )
+    .await;
+
+    assert_eq!(report.outcome(), Outcome::Diverged);
+    assert!(report.probable_causes.is_empty());
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["probableCauses"], serde_json::json!([]));
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(
+        text.contains("nothing in this run explains the divergence"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_match_names_no_cause() {
+    let report = replay(Overlay::on(FIXTURE).await).await;
+    assert_eq!(report.outcome(), Outcome::Matched);
+    assert!(report.probable_causes.is_empty());
+}
+
+// Failure kinds no testnet transaction currently exercises. Each rewrites the
+// transaction's arguments or the network's settings so that the real host
+// fails the way a contract would, and the recorded result is rewritten to
+// the code core would have recorded.
+
+/// Replace the host function's arguments, drop the recorded meta (its
+/// diagnostics belong to the original arguments) and record `code` as the
+/// network's result.
+fn with_args(
+    result: &mut Value,
+    code: InvokeHostFunctionResult,
+    edit: impl FnOnce(&mut Vec<stellar_xdr::ScVal>),
+) {
+    let envelope: TransactionEnvelope =
+        codec::decode(result["envelopeXdr"].as_str().unwrap(), "envelopeXdr").unwrap();
+    let TransactionEnvelope::Tx(mut envelope) = envelope else {
+        panic!("the fixture's envelope is not a v1 transaction");
+    };
+    let mut operations = envelope.tx.operations.to_vec();
+    let stellar_xdr::OperationBody::InvokeHostFunction(op) = &mut operations[0].body else {
+        panic!("the fixture's operation is not a host function");
+    };
+    let stellar_xdr::HostFunction::InvokeContract(call) = &mut op.host_function else {
+        panic!("the fixture does not invoke a contract");
+    };
+    let mut args = call.args.to_vec();
+    edit(&mut args);
+    call.args = args.try_into().unwrap();
+    envelope.tx.operations = operations.try_into().unwrap();
+    result["envelopeXdr"] = b64(&TransactionEnvelope::Tx(envelope)).into();
+    failed_before_the_host(result, code);
+}
+
+/// Replay `fixture` with `overlay` and check it still matches the network.
+async fn replay_matching(fixture: &str, overlay: Overlay) -> Report {
+    let request = common::request(fixture).await;
+    let report = sororewind::run(&overlay.client(), &request)
+        .await
+        .expect("the rewritten fixture could not be replayed");
+    assert_eq!(report.outcome(), Outcome::Matched, "{fixture}");
+    report
+}
+
+#[tokio::test]
+async fn a_wasm_trap_is_replayed_and_narrated() {
+    // A contract compiled from the SDK traps when its argument does not
+    // convert: the host reports a WasmVm error.
+    let report = replay_matching(
+        "nested-contract-error",
+        Overlay::on("nested-contract-error")
+            .await
+            .rewrite_result("getTransaction", |result| {
+                with_args(result, InvokeHostFunctionResult::Trapped, |args| {
+                    args[0] = stellar_xdr::ScVal::U32(1);
+                });
+            }),
+    )
+    .await;
+    assert_eq!(report.result.local.code, "trapped");
+    let failure = report.story.failure.as_ref().unwrap();
+    assert_eq!(failure.error_type, "wasm_vm");
+    assert!(failure.message.contains("VM call trapped"), "{failure:?}");
+    assert_eq!(failure.function.as_deref(), Some("execute"));
+}
+
+#[tokio::test]
+async fn a_value_error_is_replayed_and_narrated() {
+    // The Stellar Asset Contract cannot read an amount from a symbol.
+    let report = replay_matching(
+        FIXTURE,
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", |result| {
+                with_args(result, InvokeHostFunctionResult::Trapped, |args| {
+                    args[2] = stellar_xdr::ScVal::Symbol("x".try_into().unwrap());
+                });
+            }),
+    )
+    .await;
+    let failure = report.story.failure.as_ref().unwrap();
+    assert_eq!(failure.error_type, "value");
+    assert_eq!(failure.error_code, Some("UnexpectedType"));
+}
+
+#[tokio::test]
+async fn a_crypto_error_is_replayed_and_narrated() {
+    // The custom account's `__check_auth` verifies an ed25519 signature that
+    // does not verify, so `verify_sig_ed25519` fails with a crypto error,
+    // which the host reports as the authentication failure it caused. The
+    // recorded run ran out of budget inside that very call; raising the
+    // declared instructions lets it get to the verdict.
+    let report = replay_matching(
+        "budget-error",
+        Overlay::on("budget-error")
+            .await
+            .rewrite_result("getTransaction", |result| {
+                let envelope: TransactionEnvelope =
+                    codec::decode(result["envelopeXdr"].as_str().unwrap(), "envelopeXdr").unwrap();
+                let TransactionEnvelope::Tx(mut envelope) = envelope else {
+                    panic!("the fixture's envelope is not a v1 transaction");
+                };
+                let TransactionExt::V1(data) = &mut envelope.tx.ext else {
+                    panic!("the fixture's transaction carries no Soroban data");
+                };
+                data.resources.instructions = 400_000_000;
+                result["envelopeXdr"] = b64(&TransactionEnvelope::Tx(envelope)).into();
+                failed_before_the_host(result, InvokeHostFunctionResult::Trapped);
+            }),
+    )
+    .await;
+    let failure = report.story.failure.as_ref().unwrap();
+    assert_eq!(failure.error_type, "auth");
+    assert!(
+        failure.message.contains("crypto error InvalidInput"),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn events_over_the_network_limit_fail_like_core() {
+    // The host succeeds on `refundable-fee`; core then finds the events larger
+    // than the network allows. Rewrite the limit down to one byte.
+    let fixture = "refundable-fee";
+    let report = replay_matching(
+        fixture,
+        Overlay::on(fixture)
+            .await
+            .rewrite_result("getLedgerEntries", |result| {
+                let key = b64(&LedgerKey::ConfigSetting(LedgerKeyConfigSetting {
+                    config_setting_id: ConfigSettingId::ContractEventsV0,
+                }));
+                for entry in result["entries"].as_array_mut().unwrap() {
+                    if entry["key"] != key.as_str() {
+                        continue;
+                    }
+                    let LedgerEntryData::ConfigSetting(ConfigSettingEntry::ContractEventsV0(
+                        mut events,
+                    )) = codec::decode::<LedgerEntryData>(
+                        entry["xdr"].as_str().unwrap(),
+                        "a config setting",
+                    )
+                    .unwrap()
+                    else {
+                        panic!("not the events setting");
+                    };
+                    events.tx_max_contract_events_size_bytes = 1;
+                    entry["xdr"] = b64(&LedgerEntryData::ConfigSetting(
+                        ConfigSettingEntry::ContractEventsV0(events),
+                    ))
+                    .into();
+                }
+            })
+            .rewrite_result("getTransaction", |result| {
+                failed_before_the_host(result, InvokeHostFunctionResult::ResourceLimitExceeded);
+            }),
+    )
+    .await;
+    assert_eq!(report.result.local.code, "resource_limit_exceeded");
+    let failure = report.story.failure.as_ref().unwrap();
+    assert!(failure.message.contains("events size"), "{failure:?}");
+}
+
+use sororewind::report::{EntryReason, EntryStatus, EntryStatusKind};
+
+fn statuses(report: &Report, kind: EntryStatusKind) -> Vec<&EntryStatus> {
+    report
+        .footprint
+        .entry_status
+        .iter()
+        .filter(|status| status.status == kind)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_missing_entry_is_listed_with_its_reason() {
+    // The fixture's footprint holds one key the RPC has no entry for.
+    let report = replay(Overlay::on(FIXTURE).await).await;
+    assert_eq!(report.footprint.missing, 1);
+    assert_eq!(report.footprint.missing_entries.len(), 1);
+    let [missing] = statuses(&report, EntryStatusKind::Missing)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(missing.entry, report.footprint.missing_entries[0]);
+    assert_eq!(missing.reason, EntryReason::Absent);
+
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["footprint"]["missing"], 1);
+    assert_eq!(
+        json["footprint"]["missingEntries"][0],
+        missing.entry.as_str()
+    );
+    let status = json["footprint"]["entryStatus"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|status| status["status"] == "missing")
+        .unwrap();
+    assert_eq!(status["reason"], "absent");
+}
+
+/// The account entry of the fixture's footprint, as a response key.
+fn classic_entry_key() -> String {
+    let path = common::fixture_dir(FIXTURE).join("ledgerEntries.json");
+    let store: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    store["entries"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .find(|key| {
+            matches!(
+                codec::decode::<LedgerKey>(key, "a ledger key").unwrap(),
+                LedgerKey::Account(_)
+            )
+        })
+        .expect("the fixture's footprint has no account")
+        .clone()
+}
+
+#[tokio::test]
+async fn an_entry_the_rpc_left_vague_says_what_is_unknown() {
+    let key = classic_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+    let report = replay(Overlay::on(FIXTURE).await.rewrite_result(
+        "getLedgerEntries",
+        move |result| {
+            for entry in result["entries"].as_array_mut().unwrap() {
+                if entry["key"] == key.as_str() {
+                    let entry = entry.as_object_mut().unwrap();
+                    entry.remove("lastModifiedLedgerSeq");
+                    entry.remove("extXdr");
+                }
+            }
+        },
+    ))
+    .await;
+
+    let [unknown] = statuses(&report, EntryStatusKind::DriftUnknown)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(unknown.entry, label);
+    assert_eq!(unknown.reason, EntryReason::NoModificationLedger);
+    let [ext] = statuses(&report, EntryStatusKind::ExtMissing)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(
+        (ext.entry.as_str(), ext.reason),
+        (label.as_str(), EntryReason::NoExtension)
+    );
+}
+
+#[tokio::test]
+async fn an_entry_that_could_not_be_rebuilt_says_why() {
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    let key = persistent_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+
+    // The entry changed after the transaction, but the recorded ledger
+    // metadata holds no change to it: the metadata contradicts the entry.
+    let report = replay(Overlay::on(FIXTURE).await.rewrite_result(
+        "getLedgerEntries",
+        modified_at(key.clone(), plain.ledger + 1),
+    ))
+    .await;
+    let [unresolved] = statuses(&report, EntryStatusKind::Unresolved)[..] else {
+        panic!("{:?}", report.footprint.entry_status);
+    };
+    assert_eq!(unresolved.entry, label);
+    assert_eq!(unresolved.reason, EntryReason::MetadataUnreadable);
+    assert!(report.footprint.rebuild_note.is_some(), "the note stays");
+
+    // Without the transaction's position in its ledger, changes made after it
+    // in that ledger cannot be told from earlier ones.
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getLedgerEntries", modified_at(key, plain.ledger + 1))
+            .rewrite_result("getTransaction", |result| {
+                result.as_object_mut().unwrap().remove("applicationOrder");
+            }),
+    )
+    .await;
+    // Every drifted entry is in the same position, the one the overlay
+    // drifted among them.
+    let unresolved = statuses(&report, EntryStatusKind::Unresolved);
+    assert!(unresolved.iter().any(|status| status.entry == label));
+    assert!(
+        unresolved
+            .iter()
+            .all(|status| status.reason == EntryReason::NoApplyOrder)
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(
+        json["footprint"]["entryStatus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|status| status["status"] == "unresolved" && status["reason"] == "no_apply_order")
+    );
+}
+
+#[tokio::test]
+async fn a_match_over_unverified_state_says_so() {
+    // Plain fixture: nothing unverified, nothing said.
+    let plain = replay(Overlay::on(FIXTURE).await).await;
+    assert!(plain.trust.verified && plain.trust.caveats.is_empty());
+    let text = sororewind::render::human(&plain, false, sororewind::render::Detail::Summary);
+    assert!(!text.contains("could not be verified"), "{text}");
+
+    // The RPC leaves out when an entry last changed, and the apply order.
+    let key = classic_entry_key();
+    let label = sororewind::display::ledger_key(&codec::decode(&key, "a ledger key").unwrap());
+    let report = replay(
+        Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getLedgerEntries", move |result| {
+                for entry in result["entries"].as_array_mut().unwrap() {
+                    if entry["key"] == key.as_str() {
+                        entry
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("lastModifiedLedgerSeq");
+                    }
+                }
+            })
+            .rewrite_result("getTransaction", |result| {
+                result.as_object_mut().unwrap().remove("applicationOrder");
+            }),
+    )
+    .await;
+
+    // Still a match: the contract does not draw random numbers.
+    assert_eq!(report.outcome(), Outcome::Matched);
+    assert!(!report.trust.verified);
+    let kinds: Vec<_> = report.trust.caveats.iter().map(|c| c.kind).collect();
+    assert!(kinds.contains(&sororewind::trust::CaveatKind::EntryDriftUnknown));
+    assert!(kinds.contains(&sororewind::trust::CaveatKind::PrngSeedFixed));
+
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["trust"]["verified"], false);
+    let caveat = json["trust"]["caveats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|caveat| caveat["kind"] == "entry_drift_unknown")
+        .unwrap();
+    assert_eq!(caveat["subject"], label.as_str());
+
+    let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
+    assert!(
+        text.contains("✓ replay matches network")
+            && text.contains("⚠ the match rests on state that could not be verified:"),
+        "{text}"
+    );
+    assert!(text.contains(&label), "{text}");
 }

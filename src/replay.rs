@@ -32,6 +32,33 @@
 //!     declared `resourceFee` is `INSUFFICIENT_REFUNDABLE_FEE`. The fees are
 //!     computed by the host's own `fees` module from the network's settings.
 //!
+//! # What the fidelity check compares
+//!
+//! Each signal the network records is either *compared* (a mismatch is a
+//! [`Divergence`], exit 2) or *informational* (shown, never a verdict). The
+//! decision follows from whether stellar-core's own number is something this
+//! replay can reproduce exactly:
+//!
+//! - **result** and **error**: compared, see [`compare`];
+//! - **non-refundable resource fee**: compared. It is a pure function of the
+//!   declared resources, the transaction's size and the network's fee
+//!   settings, all of which the replay has, and the host's `fees` module
+//!   prices it as core does for the ledger's protocol. A mismatch means the
+//!   settings drifted or the replay prices something else than the network;
+//! - **diagnostic events**: compared. The host's diagnostics are the call
+//!   trace, and core only *appends* its own after them, so what the replay
+//!   recorded must be a prefix of what the network recorded;
+//! - **refundable fee and rent**: informational. A failed transaction is
+//!   refunded all of it, and the rent window moves (see below);
+//! - **CPU and memory**: informational. The network's metrics include work
+//!   core does around the host (loading the footprint, validating entries)
+//!   that a host-only replay never sees: recorded fixtures differ by up to
+//!   1.5 % on a faithful match. Both are in the report for a reader to judge;
+//! - **ledger changes** and **contract events**: not compared. A failed
+//!   transaction commits neither, so the network records nothing to compare
+//!   with; a replay that succeeds where the network failed is already a
+//!   [`Divergence::Result`].
+//!
 //! The rent fee is priced from the network's state-size window, which is
 //! resampled every few minutes; the replay uses the current window. Its
 //! average moves slowly, so this only matters for a transaction within a few
@@ -67,6 +94,9 @@ pub struct ReplayOutcome {
     pub budget: BudgetUse,
     /// Whether the PRNG seed was the network's or a zeroed stand-in.
     pub prng_seed: PrngSeed,
+    /// The non-refundable resource fee the declared resources cost, which the
+    /// network records in the transaction meta.
+    pub non_refundable_fee: i64,
 }
 
 /// Budget consumed by the local replay, next to the limits it ran under and,
@@ -145,6 +175,12 @@ pub enum Divergence {
     /// The same result code, reached through an error the network never
     /// recorded: the replay failed, but not the way the transaction did.
     Error,
+    /// The same result, priced differently: the non-refundable resource fee
+    /// the replay computes is not the one the network recorded.
+    Fee,
+    /// The same result, reached along a different path: the replay's
+    /// diagnostic events are not the start of the network's.
+    Events,
 }
 
 impl Fidelity {
@@ -170,6 +206,11 @@ impl Fidelity {
 /// match. Result codes are coarse, though — almost every contract failure is
 /// `TRAPPED` — so when the network kept its diagnostics, the local error must
 /// also be one the network recorded.
+///
+/// Past the result and the error, the fee and the events are compared too;
+/// the module documentation says what is compared and why, and what is not.
+/// The first difference, in the order result, error, fee, events, is the one
+/// reported.
 pub fn compare(tx: &DecodedTx, outcome: &ReplayOutcome) -> Fidelity {
     if tx.onchain_result != outcome.result {
         return Fidelity::diverged(Divergence::Result);
@@ -179,12 +220,39 @@ pub fn compare(tx: &DecodedTx, outcome: &ReplayOutcome) -> Fidelity {
         .iter()
         .filter_map(error_of)
         .collect();
-    match &outcome.error {
-        Some(local) if !onchain_errors.is_empty() && !onchain_errors.contains(&local) => {
-            Fidelity::diverged(Divergence::Error)
-        }
-        _ => Fidelity::MATCH,
+    if let Some(local) = &outcome.error
+        && !onchain_errors.is_empty()
+        && !onchain_errors.contains(&local)
+    {
+        return Fidelity::diverged(Divergence::Error);
     }
+    if tx
+        .onchain_fee
+        .is_some_and(|fee| fee.non_refundable != outcome.non_refundable_fee)
+    {
+        return Fidelity::diverged(Divergence::Fee);
+    }
+    if first_event_difference(&tx.onchain_diagnostic_events, &outcome.diagnostics).is_some() {
+        return Fidelity::diverged(Divergence::Events);
+    }
+    Fidelity::MATCH
+}
+
+/// Where the replay's diagnostic events stop being the start of the
+/// network's, as an index into both lists.
+///
+/// stellar-core appends its own diagnostics (`host_fn_failed`, `core_metrics`
+/// and, for its own checks, an `error`) after the host's, so the replay's list
+/// may be shorter than the network's but never different. A network that kept
+/// no diagnostics leaves nothing to compare.
+pub fn first_event_difference(
+    onchain: &[DiagnosticEvent],
+    local: &[DiagnosticEvent],
+) -> Option<usize> {
+    if onchain.is_empty() {
+        return None;
+    }
+    (0..local.len()).find(|&index| onchain.get(index) != local.get(index))
 }
 
 /// The `ScError` an `error` diagnostic carries.
@@ -214,6 +282,11 @@ pub fn replay(
         network_mem_bytes: core_metric(&tx.onchain_diagnostic_events, "mem_byte"),
     };
 
+    // The declared resources fix this fee, whatever the run does.
+    let non_refundable_fee = host
+        .fees(&fee_request(tx, state, ledger, &[], 0))
+        .non_refundable;
+
     // stellar-core loads the footprint before it invokes the host, and gives
     // up at the first entry it cannot take.
     if let Some((result, error, event)) = footprint_checks(tx, state) {
@@ -223,6 +296,7 @@ pub fn replay(
             diagnostics: vec![event],
             budget: budget_use,
             prng_seed,
+            non_refundable_fee,
         });
     }
 
@@ -330,6 +404,7 @@ pub fn replay(
         diagnostics,
         budget: budget_use,
         prng_seed,
+        non_refundable_fee,
     })
 }
 
@@ -713,6 +788,7 @@ mod tests {
                 network_mem_bytes: None,
             },
             prng_seed: PrngSeed::Fixed,
+            non_refundable_fee: 0,
         }
     }
 

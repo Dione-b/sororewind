@@ -103,9 +103,17 @@ expression: json(&sample_report()).unwrap()
     "networkCpuInsns": 1234567,
     "networkMemBytes": 1048576
   },
+  "fee": {
+    "onchainNonRefundable": 8521,
+    "localNonRefundable": 8521,
+    "onchainRefundable": 0,
+    "onchainRent": 0
+  },
   "footprint": {
     "entries": 4,
     "missing": 1,
+    "missingEntries": [],
+    "entryStatus": [],
     "drifted": [
       "account GAAA"
     ],
@@ -124,6 +132,11 @@ expression: json(&sample_report()).unwrap()
     "configDrifted": [],
     "configDriftUnknown": []
   },
+  "trust": {
+    "verified": true,
+    "caveats": []
+  },
+  "probableCauses": [],
   "prngSeed": "derived",
   "diagnostics": {
     "onchain": [

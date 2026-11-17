@@ -6,9 +6,11 @@ sororewind  aaaaaa…aaaa  testnet
 ledger 1000 · protocol 30 · 2023-11-14 22:13:20 UTC · fee-bump
 
 ⚠ replay diverged from the network (trapped vs entry archived)
-  the ledger has almost certainly moved since this transaction ran
   on-chain  trapped
   local     entry archived
+  probably caused by:
+    1. account GAAA — changed after the transaction ran
+    2. StateArchival — network setting changed since
 ⚠ network settings changed since this transaction ran: StateArchival
 
 call tree

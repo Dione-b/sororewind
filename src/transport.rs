@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,6 +83,32 @@ const RETRY_BASE: Duration = Duration::from_millis(400);
 /// The longest a `Retry-After` header is obeyed.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(10);
 
+/// How an [`HttpTransport`] waits and retries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransportConfig {
+    /// How long one request may take, from sending it to reading its body.
+    pub timeout: Duration,
+    /// How many times a call is retried after a transient failure.
+    pub retries: u32,
+    /// The first retry waits this long; each later one twice as long.
+    pub retry_base: Duration,
+    /// How long the whole run may take, counted from the moment the transport
+    /// is created: a call still waiting or retrying then fails. `None` sets
+    /// no limit beyond the per-request timeout and the retries.
+    pub deadline: Option<Duration>,
+}
+
+impl Default for TransportConfig {
+    fn default() -> Self {
+        Self {
+            timeout: REQUEST_TIMEOUT,
+            retries: MAX_RETRIES,
+            retry_base: RETRY_BASE,
+            deadline: None,
+        }
+    }
+}
+
 /// A [`Transport`] that sends each call to a live RPC endpoint over HTTP,
 /// retrying transient failures.
 pub struct HttpTransport {
@@ -90,7 +116,9 @@ pub struct HttpTransport {
     /// What is shown of `url`: see [`redact`].
     origin: String,
     http: reqwest::Client,
-    retry_base: Duration,
+    config: TransportConfig,
+    /// When the run's deadline passes, if it has one.
+    deadline: Option<tokio::time::Instant>,
 }
 
 /// An RPC URL with everything that can hold a credential removed.
@@ -116,6 +144,69 @@ pub fn redact(url: &str) -> String {
     format!("{}://{host}{port}{rest}", parsed.scheme())
 }
 
+/// How long a `Retry-After` header asks to wait: a number of seconds, or an
+/// HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`), which counts from `now` and
+/// is zero once it has passed. `None` for anything else.
+fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = parse_http_date(value)?;
+    Some(at.duration_since(now).unwrap_or_default())
+}
+
+/// An IMF-fixdate, the form HTTP requires servers to send.
+fn parse_http_date(value: &str) -> Option<SystemTime> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    // `Sun, 06 Nov 1994 08:49:37 GMT`
+    let mut parts = value.split_whitespace();
+    let _weekday = parts.next()?.strip_suffix(',')?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    let month_name = parts.next()?;
+    let month = MONTHS.iter().position(|name| *name == month_name)? as i64 + 1;
+    let year: i64 = parts.next()?.parse().ok()?;
+    let mut clock = parts.next()?.split(':');
+    let hour: u64 = clock.next()?.parse().ok()?;
+    let minute: u64 = clock.next()?.parse().ok()?;
+    let second: u64 = clock.next()?.parse().ok()?;
+    if parts.next()? != "GMT" || parts.next().is_some() || clock.next().is_some() {
+        return None;
+    }
+    if !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    // Days since 1970-01-01 (Howard Hinnant's `days_from_civil`).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let year_of_era = y - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let seconds = u64::try_from(days).ok()? * 86_400 + hour * 3_600 + minute * 60 + second;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+}
+
+/// The code and message of a JSON-RPC error that says the caller is going
+/// too fast, whatever the HTTP status: code `429` or `-32005` (the de facto
+/// "limit exceeded"), or a message that names a rate limit.
+fn rate_limit_error(text: &str) -> Option<(i64, String)> {
+    let body: Value = serde_json::from_str(text).ok()?;
+    let error = body.get("error").filter(|error| !error.is_null())?;
+    let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let lower = message.to_ascii_lowercase();
+    let named = ["rate limit", "rate-limit", "ratelimit", "too many requests"]
+        .iter()
+        .any(|phrase| lower.contains(phrase));
+    (matches!(code, 429 | -32005) || named).then(|| (code, message.to_string()))
+}
+
 /// What became of one attempt at a call.
 enum Attempt {
     Done(String),
@@ -129,10 +220,16 @@ impl HttpTransport {
     /// A transport for the RPC at `url`, with the default timeouts and retry
     /// policy. Fails only when the HTTP client cannot be built.
     pub fn new(url: impl Into<String>) -> Result<Self> {
+        Self::with_config(url, TransportConfig::default())
+    }
+
+    /// A transport for the RPC at `url` with the given timeouts and retry
+    /// policy. The deadline, if any, starts counting now.
+    pub fn with_config(url: impl Into<String>, config: TransportConfig) -> Result<Self> {
         let url = url.into();
         let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(config.timeout)
+            .connect_timeout(CONNECT_TIMEOUT.min(config.timeout))
             .user_agent(concat!("sororewind/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(RewindError::HttpClient)?;
@@ -140,14 +237,31 @@ impl HttpTransport {
             origin: redact(&url),
             url,
             http,
-            retry_base: RETRY_BASE,
+            config,
+            deadline: config
+                .deadline
+                .map(|limit| tokio::time::Instant::now() + limit),
         })
     }
 
     /// Wait this long before the first retry instead of the default.
     pub fn with_retry_base(mut self, base: Duration) -> Self {
-        self.retry_base = base;
+        self.config.retry_base = base;
         self
+    }
+
+    /// The error for a call that was still waiting when the run's deadline
+    /// passed.
+    fn deadline_exceeded(&self, method: &str) -> RewindError {
+        let limit = self.config.deadline.unwrap_or_default();
+        RewindError::RpcUnreachable {
+            url: self.origin.clone(),
+            detail: format!(
+                "the run's deadline of {}s passed while {method} was still being tried",
+                limit.as_secs_f64()
+            ),
+            source: None,
+        }
     }
 
     fn unreachable(&self, source: reqwest::Error) -> RewindError {
@@ -155,7 +269,7 @@ impl HttpTransport {
         // (DNS, TLS, connection refused) is further down the source chain.
         let source = source.without_url();
         let mut detail = if source.is_timeout() {
-            format!("timed out after {}s", REQUEST_TIMEOUT.as_secs())
+            format!("timed out after {}s", self.config.timeout.as_secs())
         } else if source.is_connect() {
             "connection failed".to_string()
         } else {
@@ -173,7 +287,7 @@ impl HttpTransport {
         RewindError::RpcUnreachable {
             url: self.origin.clone(),
             detail,
-            source,
+            source: Some(source),
         }
     }
 
@@ -197,14 +311,28 @@ impl HttpTransport {
             .headers()
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .map(|seconds| Duration::from_secs(seconds).min(MAX_RETRY_AFTER));
+            .and_then(|value| parse_retry_after(value, SystemTime::now()))
+            .map(|wait| wait.min(MAX_RETRY_AFTER));
         let text = match response.text().await {
             Ok(text) => text,
             Err(e) => return Attempt::Transient(self.unreachable(e), None),
         };
+        let rate_limit = rate_limit_error(&text);
         if status.is_success() {
-            return Attempt::Done(text);
+            // Some providers answer a rate limit with HTTP 200 and the
+            // JSON-RPC error inside.
+            return match rate_limit {
+                Some((code, detail)) => Attempt::Transient(
+                    RewindError::Rpc {
+                        origin: self.origin(),
+                        method: method.to_string(),
+                        code: Some(code),
+                        detail,
+                    },
+                    retry_after,
+                ),
+                None => Attempt::Done(text),
+            };
         }
         let error = RewindError::Rpc {
             origin: self.origin(),
@@ -214,7 +342,7 @@ impl HttpTransport {
         };
         // A rate limit or an overloaded gateway is worth waiting out, even
         // when the provider phrases it as a JSON-RPC error.
-        if matches!(status.as_u16(), 429 | 502 | 503 | 504) {
+        if matches!(status.as_u16(), 429 | 502 | 503 | 504) || rate_limit.is_some() {
             return Attempt::Transient(error, retry_after);
         }
         // Some providers answer a JSON-RPC error with a non-2xx status; the
@@ -232,12 +360,39 @@ impl HttpTransport {
     /// doubled each time, plus up to half as much again so that concurrent
     /// calls do not all come back at once.
     fn backoff(&self, retry: u32) -> Duration {
-        let wait = self.retry_base.saturating_mul(1 << retry.min(8));
+        let wait = self.config.retry_base.saturating_mul(1 << retry.min(8));
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |now| u64::from(now.subsec_nanos()));
         let jitter = wait.as_millis() as u64 / 2;
         wait + Duration::from_millis(if jitter == 0 { 0 } else { nanos % jitter })
+    }
+}
+
+impl HttpTransport {
+    /// One call: the attempts, and the waits between them.
+    async fn call(&self, method: &str, body: &Value) -> Result<String> {
+        let retries = self.config.retries;
+        let mut retry = 0;
+        loop {
+            match self.attempt(method, body).await {
+                Attempt::Done(text) => {
+                    log::trace!(target: "rpc", "← {method} {}", truncate(&text, 400));
+                    return Ok(text);
+                }
+                Attempt::Transient(error, retry_after) if retry < retries => {
+                    let wait = retry_after.unwrap_or_else(|| self.backoff(retry));
+                    retry += 1;
+                    log::debug!(
+                        target: "rpc",
+                        "{method} failed ({error}); retry {retry} of {retries} in {} ms",
+                        wait.as_millis()
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+                Attempt::Transient(error, _) | Attempt::Failed(error) => return Err(error),
+            }
+        }
     }
 }
 
@@ -252,25 +407,12 @@ impl Transport for HttpTransport {
             });
             log::trace!(target: "rpc", "→ {method} {params}");
 
-            let mut retry = 0;
-            loop {
-                match self.attempt(method, &body).await {
-                    Attempt::Done(text) => {
-                        log::trace!(target: "rpc", "← {method} {}", truncate(&text, 400));
-                        return Ok(text);
-                    }
-                    Attempt::Transient(error, retry_after) if retry < MAX_RETRIES => {
-                        let wait = retry_after.unwrap_or_else(|| self.backoff(retry));
-                        retry += 1;
-                        log::debug!(
-                            target: "rpc",
-                            "{method} failed ({error}); retry {retry} of {MAX_RETRIES} in {} ms",
-                            wait.as_millis()
-                        );
-                        tokio::time::sleep(wait).await;
-                    }
-                    Attempt::Transient(error, _) | Attempt::Failed(error) => return Err(error),
-                }
+            let call = self.call(method, &body);
+            match self.deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, call)
+                    .await
+                    .unwrap_or_else(|_| Err(self.deadline_exceeded(method))),
+                None => call.await,
             }
         })
     }
@@ -994,6 +1136,146 @@ mod tests {
         assert!(!backup.exists());
         recording.handle().discard().await;
         assert!(target.join(MANIFEST_FILE).exists(), "discarding keeps it");
+    }
+
+    #[test]
+    fn retry_after_reads_seconds_and_http_dates() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(784_111_777 - 5);
+        // Seconds, with stray whitespace.
+        assert_eq!(parse_retry_after(" 7 ", now), Some(Duration::from_secs(7)));
+        // The RFC 9110 example date, five seconds ahead.
+        assert_eq!(
+            parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", now),
+            Some(Duration::from_secs(5))
+        );
+        // A date that has passed means: no need to wait.
+        let later = now + Duration::from_secs(3_600);
+        assert_eq!(
+            parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", later),
+            Some(Duration::ZERO)
+        );
+        // Leap day and a far year.
+        assert_eq!(
+            parse_http_date("Thu, 29 Feb 2024 12:00:00 GMT"),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_709_208_000))
+        );
+        for bad in [
+            "",
+            "soon",
+            "-1",
+            "06 Nov 1994 08:49:37 GMT",
+            "Sun, 06 Nov 1994 08:49:37 UTC",
+            "Sun, 06 Nox 1994 08:49:37 GMT",
+            "Sun, 32 Nov 1994 08:49:37 GMT",
+            "Sun, 06 Nov 1994 25:49:37 GMT",
+        ] {
+            assert_eq!(parse_retry_after(bad, now), None, "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_retry_after_date_is_obeyed() {
+        let ok = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        // A date long past: the server says to retry at once.
+        let (url, server) = serve(vec![
+            (
+                503,
+                "retry-after: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+                "busy",
+            ),
+            (200, "", ok),
+        ]);
+        let text = fast(&url).request("getNetwork", &json!({})).await.unwrap();
+        assert_eq!(text, ok);
+        assert_eq!(server.join().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_inside_an_http_200_is_retried() {
+        let ok = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        let by_code =
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limit exceeded"}}"#;
+        let by_message =
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Rate limit reached"}}"#;
+        let (url, server) = serve(vec![
+            (200, "", by_code),
+            (200, "", by_message),
+            (200, "", ok),
+        ]);
+        let text = fast(&url).request("getNetwork", &json!({})).await.unwrap();
+        assert_eq!(text, ok);
+        assert_eq!(server.join().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_persistent_rate_limit_is_reported_as_an_rpc_error() {
+        let limited =
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":429,"message":"too many requests"}}"#;
+        let (url, server) = serve(vec![(200, "", limited); MAX_RETRIES as usize + 1]);
+        let err = fast(&url)
+            .request("getNetwork", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, RewindError::Rpc { code: Some(429), detail, .. } if detail == "too many requests"),
+            "{err}"
+        );
+        assert_eq!(server.join().unwrap(), MAX_RETRIES as usize + 1);
+    }
+
+    #[tokio::test]
+    async fn other_json_rpc_errors_in_a_200_are_not_retried() {
+        let bad = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}"#;
+        let (url, server) = serve(vec![(200, "", bad)]);
+        let text = fast(&url).request("getNetwork", &json!({})).await.unwrap();
+        assert_eq!(text, bad);
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_retry_count_is_configurable() {
+        let (url, server) = serve(vec![(503, "", "busy"); 2]);
+        let transport = HttpTransport::with_config(
+            &url,
+            TransportConfig {
+                retries: 1,
+                retry_base: Duration::from_millis(1),
+                ..TransportConfig::default()
+            },
+        )
+        .unwrap();
+        transport
+            .request("getNetwork", &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(server.join().unwrap(), 2, "one try and one retry");
+    }
+
+    #[tokio::test]
+    async fn the_deadline_ends_a_call_that_is_still_waiting() {
+        // The server asks for a wait far longer than the deadline.
+        let (url, server) = serve(vec![(503, "retry-after: 5\r\n", "busy")]);
+        let transport = HttpTransport::with_config(
+            &url,
+            TransportConfig {
+                deadline: Some(Duration::from_millis(300)),
+                ..TransportConfig::default()
+            },
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let err = transport
+            .request("getNetwork", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(4), "did not wait");
+        let text = err.to_string();
+        assert!(matches!(err, RewindError::RpcUnreachable { .. }), "{text}");
+        assert_eq!(err.kind(), "rpc_unreachable");
+        assert!(text.contains("deadline of 0.3s passed"), "{text}");
+        assert!(text.contains("getNetwork"), "{text}");
+        assert!(!text.contains("SECRETKEY"), "{text}");
+        assert_eq!(server.join().unwrap(), 1);
     }
 
     #[tokio::test]

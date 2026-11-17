@@ -8,8 +8,8 @@ use stellar_xdr::{
     AccountId, DiagnosticEvent, FeeBumpTransactionInnerTx, HostFunction,
     InnerTransactionResultResult, InvokeHostFunctionResult, LedgerKey, MuxedAccount, OperationBody,
     OperationResult, OperationResultTr, PublicKey, SorobanAuthorizationEntry, SorobanResources,
-    SorobanTransactionDataExt, Transaction, TransactionEnvelope, TransactionExt, TransactionMeta,
-    TransactionResult, TransactionResultResult,
+    SorobanTransactionDataExt, SorobanTransactionMetaExt, Transaction, TransactionEnvelope,
+    TransactionExt, TransactionMeta, TransactionResult, TransactionResultResult,
 };
 
 use crate::codec;
@@ -53,6 +53,22 @@ pub struct DecodedTx {
     /// The diagnostic events the network recorded; empty when the RPC sent
     /// no `resultMetaXdr` or the meta holds none.
     pub onchain_diagnostic_events: Vec<DiagnosticEvent>,
+    /// The resource fees the network recorded in the transaction meta; `None`
+    /// when the RPC sent no `resultMetaXdr` or the meta carries no fee
+    /// breakdown (transaction meta before protocol 23).
+    pub onchain_fee: Option<OnchainFee>,
+}
+
+/// The resource fee breakdown stellar-core writes into the meta of a Soroban
+/// transaction (`SorobanTransactionMetaExtV1`), in stroops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnchainFee {
+    /// The part charged whatever happens, priced from the declared resources.
+    pub non_refundable: i64,
+    /// The refundable part kept after the refund: the events fee.
+    pub refundable: i64,
+    /// The rent fee kept after the refund.
+    pub rent: i64,
 }
 
 impl DecodedTx {
@@ -162,10 +178,13 @@ pub fn decode(hash: &TxHash, raw: &RawTransaction) -> Result<DecodedTx> {
         codec::decode(field(&raw.result_xdr, "resultXdr")?, "resultXdr")?;
     let onchain_result = extract_invoke_result(&tx_result, hash)?;
 
-    let onchain_diagnostic_events = match raw.result_meta_xdr.as_deref() {
-        Some(meta) => diagnostic_events(&codec::decode(meta, "resultMetaXdr")?),
-        None => Vec::new(),
-    };
+    let meta: Option<TransactionMeta> = raw
+        .result_meta_xdr
+        .as_deref()
+        .map(|meta| codec::decode(meta, "resultMetaXdr"))
+        .transpose()?;
+    let onchain_diagnostic_events = meta.as_ref().map(diagnostic_events).unwrap_or_default();
+    let onchain_fee = meta.as_ref().and_then(onchain_fee);
 
     let restored_rw_indices = match &soroban_data.ext {
         SorobanTransactionDataExt::V1(ext) => ext.archived_soroban_entries.to_vec(),
@@ -190,6 +209,7 @@ pub fn decode(hash: &TxHash, raw: &RawTransaction) -> Result<DecodedTx> {
         restored_rw_indices,
         onchain_result,
         onchain_diagnostic_events,
+        onchain_fee,
     })
 }
 
@@ -252,6 +272,23 @@ fn diagnostic_events(meta: &TransactionMeta) -> Vec<DiagnosticEvent> {
             .unwrap_or_default(),
         TransactionMeta::V4(v4) => v4.diagnostic_events.to_vec(),
         _ => Vec::new(),
+    }
+}
+
+/// The fee breakdown in a transaction meta, when it has one.
+fn onchain_fee(meta: &TransactionMeta) -> Option<OnchainFee> {
+    let ext = match meta {
+        TransactionMeta::V3(v3) => &v3.soroban_meta.as_ref()?.ext,
+        TransactionMeta::V4(v4) => &v4.soroban_meta.as_ref()?.ext,
+        _ => return None,
+    };
+    match ext {
+        SorobanTransactionMetaExt::V1(fees) => Some(OnchainFee {
+            non_refundable: fees.total_non_refundable_resource_fee_charged,
+            refundable: fees.total_refundable_resource_fee_charged,
+            rent: fees.rent_fee_charged,
+        }),
+        SorobanTransactionMetaExt::V0 => None,
     }
 }
 

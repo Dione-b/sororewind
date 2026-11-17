@@ -551,6 +551,52 @@ mod tests {
     }
 
     #[test]
+    fn host_error_families_are_named() {
+        // No recorded or synthesisable transaction raises an `Object` error
+        // (they come from a contract misusing a handle), so the narration of
+        // each family the host can report is pinned here.
+        for (error, family, code) in [
+            (
+                ScError::Object(ScErrorCode::IndexBounds),
+                "object",
+                "IndexBounds",
+            ),
+            (
+                ScError::Crypto(ScErrorCode::InvalidInput),
+                "crypto",
+                "InvalidInput",
+            ),
+            (
+                ScError::Events(ScErrorCode::ExceededLimit),
+                "events",
+                "ExceededLimit",
+            ),
+            (
+                ScError::Value(ScErrorCode::UnexpectedType),
+                "value",
+                "UnexpectedType",
+            ),
+            (
+                ScError::WasmVm(ScErrorCode::InvalidAction),
+                "wasm vm",
+                "InvalidAction",
+            ),
+        ] {
+            let story = Story::build(
+                &[
+                    fn_call(None, A, "run", vec![]),
+                    error_event(Some(A), error.clone(), "boom"),
+                ],
+                Some(&error),
+            );
+            let failure = story.failure.as_ref().unwrap();
+            assert_eq!(failure.error_code, Some(code), "{family}");
+            assert!(failure.description.contains(family), "{failure:?}");
+            assert_eq!(failure.function.as_deref(), Some("run"), "{family}");
+        }
+    }
+
+    #[test]
     fn failure_leaves_the_path_open() {
         let fatal = ScError::Contract(3);
         let story = Story::build(

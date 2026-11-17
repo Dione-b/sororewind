@@ -11,7 +11,9 @@ use crate::network::Network;
 use crate::pipeline::Request;
 use crate::render::ColorChoice;
 use crate::rpc::RpcClient;
-use crate::transport::{FixtureTransport, HttpTransport, Recording, RecordingHandle};
+use crate::transport::{
+    FixtureTransport, HttpTransport, Recording, RecordingHandle, TransportConfig,
+};
 
 /// Replay a failed Soroban transaction locally and narrate the call tree.
 #[derive(Debug, Parser)]
@@ -48,6 +50,23 @@ pub struct Cli {
     /// key: arguments end up in shell history and process listings
     #[arg(long, value_name = "URL", conflicts_with = "fixture", value_parser = parse_rpc_url)]
     pub rpc_url: Option<String>,
+
+    /// Seconds one RPC request may take before it is abandoned and retried
+    /// [default: 30; env SOROREWIND_TIMEOUT]
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout: Option<u64>,
+
+    /// How many times a failed RPC call is retried (connection errors,
+    /// timeouts, HTTP 429/502/503/504, rate-limit errors); 0 never retries
+    /// [default: 3; env SOROREWIND_RETRIES]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(0..=10))]
+    pub retries: Option<u32>,
+
+    /// Seconds the whole run may spend on the RPC, retries and waits
+    /// included; a call still going then fails with rpc_unreachable
+    /// [default: none; env SOROREWIND_DEADLINE]
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=86_400))]
+    pub deadline: Option<u64>,
 
     /// Emit machine-readable JSON instead of the human narrative
     #[arg(long)]
@@ -124,6 +143,43 @@ pub const RPC_URL_ENV: &str = "SOROREWIND_RPC_URL";
 /// The endpoint an environment value names; an empty value names none.
 fn rpc_url_from(value: Option<String>) -> Option<String> {
     value.filter(|url| !url.trim().is_empty())
+}
+
+/// The environment variables behind `--timeout`, `--retries` and
+/// `--deadline`.
+pub const TIMEOUT_ENV: &str = "SOROREWIND_TIMEOUT";
+/// See [`TIMEOUT_ENV`].
+pub const RETRIES_ENV: &str = "SOROREWIND_RETRIES";
+/// See [`TIMEOUT_ENV`].
+pub const DEADLINE_ENV: &str = "SOROREWIND_DEADLINE";
+
+/// A number the flag gave, or else the one the environment variable holds,
+/// within `range`. An empty variable names none.
+fn number_setting(
+    flag: Option<u64>,
+    name: &'static str,
+    value: Option<String>,
+    range: std::ops::RangeInclusive<u64>,
+) -> Result<Option<u64>> {
+    if flag.is_some() {
+        return Ok(flag);
+    }
+    let Some(text) = value.filter(|text| !text.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let invalid = |reason: String| RewindError::InvalidOption { name, reason };
+    let number: u64 = text
+        .trim()
+        .parse()
+        .map_err(|_| invalid(format!("`{}` is not a whole number", text.trim())))?;
+    if !range.contains(&number) {
+        return Err(invalid(format!(
+            "{number} is outside {} to {}",
+            range.start(),
+            range.end()
+        )));
+    }
+    Ok(Some(number))
 }
 
 /// An RPC endpoint has to be an absolute http(s) URL: `localhost:8000` parses
@@ -229,6 +285,27 @@ impl Cli {
         }
     }
 
+    /// The timeouts, retries and deadline the flags and the environment ask
+    /// for; a flag wins over its variable.
+    pub fn transport_config(&self) -> Result<TransportConfig> {
+        let env = |name: &str| std::env::var(name).ok();
+        let defaults = TransportConfig::default();
+        let timeout = number_setting(self.timeout, TIMEOUT_ENV, env(TIMEOUT_ENV), 1..=3600)?;
+        let retries = number_setting(
+            self.retries.map(u64::from),
+            RETRIES_ENV,
+            env(RETRIES_ENV),
+            0..=10,
+        )?;
+        let deadline = number_setting(self.deadline, DEADLINE_ENV, env(DEADLINE_ENV), 1..=86_400)?;
+        Ok(TransportConfig {
+            timeout: timeout.map_or(defaults.timeout, std::time::Duration::from_secs),
+            retries: retries.map_or(defaults.retries, |n| u32::try_from(n).unwrap_or(10)),
+            deadline: deadline.map(std::time::Duration::from_secs),
+            ..defaults
+        })
+    }
+
     /// Open the source of RPC responses the arguments ask for, and work out
     /// which transaction to replay.
     pub async fn connect(&self) -> Result<Connection> {
@@ -264,7 +341,7 @@ impl Cli {
                             .default_rpc_url()
                             .to_string()
                     });
-                let http = HttpTransport::new(url)?;
+                let http = HttpTransport::with_config(url, self.transport_config()?)?;
                 let rpc = match &self.record {
                     Some(dir) => {
                         let recorder = Recording::create(http, dir, &hash).await?;
@@ -297,6 +374,56 @@ mod tests {
 
     fn parse(args: &[&str]) -> std::result::Result<Cli, clap::Error> {
         Cli::try_parse_args(std::iter::once("sororewind").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn rpc_timeouts_are_validated_at_parse_time() {
+        let cli = parse(&[HASH, "--timeout", "5", "--retries", "0", "--deadline", "60"]).unwrap();
+        assert_eq!(
+            (cli.timeout, cli.retries, cli.deadline),
+            (Some(5), Some(0), Some(60))
+        );
+        for bad in [
+            &["--timeout", "0"][..],
+            &["--timeout", "soon"][..],
+            &["--retries", "11"][..],
+            &["--deadline", "0"][..],
+        ] {
+            let args: Vec<&str> = std::iter::once(HASH).chain(bad.iter().copied()).collect();
+            assert_eq!(
+                parse(&args).unwrap_err().kind(),
+                ErrorKind::ValueValidation,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_come_from_the_flag_then_the_environment() {
+        let var = |text: &str| Some(text.to_string());
+        // The flag wins, even over an invalid variable.
+        assert_eq!(
+            number_setting(Some(5), TIMEOUT_ENV, var("x"), 1..=10).unwrap(),
+            Some(5)
+        );
+        assert_eq!(
+            number_setting(None, TIMEOUT_ENV, var(" 7 "), 1..=10).unwrap(),
+            Some(7)
+        );
+        // Unset and empty name nothing.
+        assert_eq!(
+            number_setting(None, TIMEOUT_ENV, None, 1..=10).unwrap(),
+            None
+        );
+        assert_eq!(
+            number_setting(None, TIMEOUT_ENV, var("  "), 1..=10).unwrap(),
+            None
+        );
+        for bad in ["soon", "-3", "0", "11", "1.5"] {
+            let err = number_setting(None, RETRIES_ENV, var(bad), 1..=10).unwrap_err();
+            assert_eq!(err.kind(), "invalid_option", "{bad}");
+            assert!(err.to_string().contains(RETRIES_ENV), "{err}");
+        }
     }
 
     #[test]

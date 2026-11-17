@@ -7,17 +7,20 @@
 
 use std::path::PathBuf;
 
+use crate::culprit;
 use crate::display;
 use crate::error::{Result, Retention, RewindError};
 use crate::hash::TxHash;
 use crate::network::{Network, NetworkId};
 use crate::replay::{self, Fidelity, ReplayOutcome};
 use crate::report::{
-    Diagnostics, FootprintReport, Report, ResultPair, SCHEMA_VERSION, TtlDriftEntry,
+    Diagnostics, EntryReason, EntryStatus, EntryStatusKind, FeeReport, FootprintReport, Report,
+    ResultPair, SCHEMA_VERSION, TtlDriftEntry,
 };
 use crate::rpc::{RawTransaction, RpcClient, TxStatus};
 use crate::state::{self, LedgerContext, Reconstructed};
 use crate::story::Story;
+use crate::trust;
 use crate::tx::{self, DecodedTx};
 use crate::{host, spec, strkey};
 use stellar_xdr::{ConfigSettingId, InvokeHostFunctionResult};
@@ -252,6 +255,24 @@ struct Replayed<'a> {
 }
 
 fn assemble(run: Replayed<'_>) -> Report {
+    let footprint = footprint_report(
+        &run.state,
+        run.ledger.sequence,
+        [&run.tx.onchain_result, &run.outcome.result]
+            .contains(&&InvokeHostFunctionResult::InsufficientRefundableFee),
+    );
+    let trust = trust::assess(&footprint, run.outcome.prng_seed, &run.tx);
+    let probable_causes = if run.fidelity.matches {
+        Vec::new()
+    } else {
+        culprit::find(
+            &footprint,
+            run.outcome.prng_seed,
+            &run.tx,
+            &run.outcome,
+            &run.story,
+        )
+    };
     Report {
         schema_version: SCHEMA_VERSION,
         hash: run.tx.hash.clone(),
@@ -272,12 +293,15 @@ fn assemble(run: Replayed<'_>) -> Report {
         },
         story: run.story,
         budget: run.outcome.budget,
-        footprint: footprint_report(
-            &run.state,
-            run.ledger.sequence,
-            [&run.tx.onchain_result, &run.outcome.result]
-                .contains(&&InvokeHostFunctionResult::InsufficientRefundableFee),
-        ),
+        fee: FeeReport {
+            onchain_non_refundable: run.tx.onchain_fee.map(|fee| fee.non_refundable),
+            local_non_refundable: run.outcome.non_refundable_fee,
+            onchain_refundable: run.tx.onchain_fee.map(|fee| fee.refundable),
+            onchain_rent: run.tx.onchain_fee.map(|fee| fee.rent),
+        },
+        footprint,
+        trust,
+        probable_causes,
         prng_seed: run.outcome.prng_seed,
         diagnostics: Diagnostics {
             onchain: lines(&run.tx.onchain_diagnostic_events),
@@ -327,6 +351,8 @@ fn footprint_report(state: &Reconstructed, tx_ledger: u32, fee_decided: bool) ->
     FootprintReport {
         entries: state.slots.len(),
         missing: state.slots.iter().filter(|slot| slot.missing()).count(),
+        missing_entries: labels(&|slot| slot.missing()),
+        entry_status: entry_status(state),
         drifted: labels(&|slot| slot.value_drifted(tx_ledger)),
         ttl_drifted: state
             .slots
@@ -354,4 +380,55 @@ fn footprint_report(state: &Reconstructed, tx_ledger: u32, fee_decided: bool) ->
             .map(|setting| setting.to_string())
             .collect(),
     }
+}
+
+/// Every slot that is not as plain as it looks, with why.
+fn entry_status(state: &Reconstructed) -> Vec<EntryStatus> {
+    let mut statuses = Vec::new();
+    for slot in &state.slots {
+        let entry = display::ledger_key(&slot.key);
+        let mut push = |status, reason, detail: &str| {
+            statuses.push(EntryStatus {
+                entry: entry.clone(),
+                status,
+                reason,
+                detail: detail.to_string(),
+            });
+        };
+        if let Some(reason) = slot.unresolved {
+            push(
+                EntryStatusKind::Unresolved,
+                reason.into(),
+                &format!("not rebuilt: {}", reason.describe()),
+            );
+        }
+        match slot.liveness {
+            state::Liveness::Absent => push(
+                EntryStatusKind::Missing,
+                EntryReason::Absent,
+                "the RPC has no such entry, so the host was handed none",
+            ),
+            state::Liveness::Expired => push(
+                EntryStatusKind::Missing,
+                EntryReason::Expired,
+                "a temporary entry past its TTL, which to the host does not exist",
+            ),
+            _ => {}
+        }
+        if slot.drift_unknown() {
+            push(
+                EntryStatusKind::DriftUnknown,
+                EntryReason::NoModificationLedger,
+                "the RPC did not say when it last changed",
+            );
+        }
+        if slot.ext_missing {
+            push(
+                EntryStatusKind::ExtMissing,
+                EntryReason::NoExtension,
+                "the RPC sent it without its extension, so it was replayed with an empty one",
+            );
+        }
+    }
+    statuses
 }

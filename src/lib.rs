@@ -18,6 +18,7 @@
 
 pub mod cli;
 pub mod codec;
+pub mod culprit;
 pub mod discover;
 pub mod display;
 pub mod error;
@@ -35,6 +36,7 @@ pub mod state;
 pub mod story;
 pub mod strkey;
 pub mod transport;
+pub mod trust;
 pub mod tx;
 
 #[cfg(test)]

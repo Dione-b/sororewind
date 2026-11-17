@@ -21,6 +21,7 @@ CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer(GB2YUAICRUQNA
 budget 907,402 / 1,033,991 cpu instructions · 23.6 KB / 40.0 MB memory
 network used 907,402 cpu instructions · 23.6 KB memory
 footprint 4 entries · 0 drifted · 0 ttl-drifted · 1 missing · prng seed derived
+  why: contract data G…SCWC <nonce 1082260681902037437> (temporary) (absent) — the RPC has no such entry, so the host was handed none
 
 on-chain diagnostics
   fail [-] fn_call, 0xd7928b72c2703ccf…(32 bytes), transfer [GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000]

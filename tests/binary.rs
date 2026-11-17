@@ -104,12 +104,29 @@ fn a_divergence_exits_2_and_still_prints_the_report() {
     assert!(text.contains("replay diverged from the network"), "{text}");
     // A divergence shows the footprint without being asked.
     assert!(text.contains("footprint "), "{text}");
+    // The whole narrative and its exit code, pinned. Nothing here drifted,
+    // so the report says that nothing explains the divergence.
+    insta::assert_snapshot!(
+        "diverged-text",
+        format!("--- exit code: 2\n{text}").replace(&path, "<fixture>")
+    );
 
     let out = sororewind(&["--fixture", &path, "--json"]);
     assert_eq!(out.status.code(), Some(2));
     let json: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["fidelity"]["match"], false);
     assert_eq!(json["fidelity"]["divergence"], "result");
+    assert_eq!(json["probableCauses"], serde_json::json!([]));
+    let mut pinned = json.clone();
+    // `rpc` names the temporary fixture directory.
+    pinned["rpc"] = "<fixture>".into();
+    insta::assert_snapshot!(
+        "diverged-json",
+        format!(
+            "--- exit code: 2\n{}",
+            serde_json::to_string_pretty(&pinned).unwrap()
+        )
+    );
 }
 
 #[test]
