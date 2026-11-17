@@ -8,6 +8,14 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ## [Unreleased]
 
+### Added
+
+- Findings: the report opens with a short list of what matters, each with a
+  severity (`error` for the transaction's own failure, then `divergence`,
+  `warning` and `limitation` for the replay), a one-line summary naming the
+  probable cause, and the report fields it rests on. It is in the text output
+  and in the JSON as `findings`, an additive field.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added

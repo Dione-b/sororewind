@@ -6,6 +6,10 @@ expression: "common::transcript(&result, &human)"
 sororewind  75530f…2fc9  mainnet
 ledger 65424472 · protocol 29 · 2026-11-11 14:46:42 UTC
 
+findings
+  error      the transaction failed: auth error ExistingValue in swap
+  warning    changed after the transaction and could not be rebuilt: account GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR, trustline GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR USDC:G…KZVN
+
 ✓ replay matches network
   on-chain  trapped
   local     trapped

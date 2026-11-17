@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use crate::culprit;
 use crate::display;
 use crate::error::{Result, Retention, RewindError};
+use crate::findings;
 use crate::hash::TxHash;
 use crate::network::{Network, NetworkId};
 use crate::replay::{self, Fidelity, ReplayOutcome};
@@ -273,6 +274,24 @@ fn assemble(run: Replayed<'_>) -> Report {
             &run.story,
         )
     };
+    let result = ResultPair {
+        onchain: (&run.tx.onchain_result).into(),
+        local: (&run.outcome.result).into(),
+    };
+    let fee = FeeReport {
+        onchain_non_refundable: run.tx.onchain_fee.map(|fee| fee.non_refundable),
+        local_non_refundable: run.outcome.non_refundable_fee,
+        onchain_refundable: run.tx.onchain_fee.map(|fee| fee.refundable),
+        onchain_rent: run.tx.onchain_fee.map(|fee| fee.rent),
+    };
+    let findings = findings::derive(&findings::Inputs {
+        fidelity: &run.fidelity,
+        result: &result,
+        failure: run.story.failure.as_ref(),
+        fee: &fee,
+        probable_causes: &probable_causes,
+        trust: &trust,
+    });
     Report {
         schema_version: SCHEMA_VERSION,
         hash: run.tx.hash.clone(),
@@ -286,19 +305,12 @@ fn assemble(run: Replayed<'_>) -> Report {
         protocol: run.ledger.protocol,
         close_time: run.ledger.close_time,
         status: "failed",
+        findings,
         fidelity: run.fidelity,
-        result: ResultPair {
-            onchain: (&run.tx.onchain_result).into(),
-            local: (&run.outcome.result).into(),
-        },
+        result,
         story: run.story,
         budget: run.outcome.budget,
-        fee: FeeReport {
-            onchain_non_refundable: run.tx.onchain_fee.map(|fee| fee.non_refundable),
-            local_non_refundable: run.outcome.non_refundable_fee,
-            onchain_refundable: run.tx.onchain_fee.map(|fee| fee.refundable),
-            onchain_rent: run.tx.onchain_fee.map(|fee| fee.rent),
-        },
+        fee,
         footprint,
         trust,
         probable_causes,

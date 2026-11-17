@@ -121,6 +121,23 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
     "divergence": "result",
     "match": false
   },
+  "findings": [
+    {
+      "evidence": [
+        "result.onchain"
+      ],
+      "severity": "error",
+      "summary": "the transaction failed on-chain: resource limit exceeded"
+    },
+    {
+      "evidence": [
+        "fidelity",
+        "result"
+      ],
+      "severity": "divergence",
+      "summary": "the replay ended in trapped where the network recorded resource limit exceeded; nothing in this run explains it"
+    }
+  ],
   "footprint": {
     "archived": [],
     "archivedInferred": [],
