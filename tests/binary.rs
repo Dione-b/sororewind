@@ -153,6 +153,17 @@ fn argument_errors_exit_1_on_stderr() {
 }
 
 #[test]
+fn run_errors_name_their_stage_on_stderr() {
+    let out = sororewind(&["--fixture", "/nonexistent/fixture"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).starts_with("sororewind: [fetch] "),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn help_and_version_exit_0_on_stdout() {
     let out = sororewind(&["--help"]);
     assert_eq!(out.status.code(), Some(0));

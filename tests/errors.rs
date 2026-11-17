@@ -10,6 +10,7 @@ mod common;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use sororewind::error::Stage;
 use sororewind::rpc::RpcClient;
 use sororewind::transport::{FixtureTransport, HttpTransport};
 use sororewind::{Request, RewindError, codec};
@@ -80,6 +81,7 @@ async fn transaction_not_found() {
         );
     let err = fails(overlay, "not found on testnet").await;
     assert!(matches!(err, RewindError::NotFound { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
     // The retention window the RPC reported is part of the explanation.
     assert!(err.to_string().contains("120960 ledgers"), "{err}");
 }
@@ -95,6 +97,7 @@ async fn transaction_not_found_without_a_health_probe() {
         });
     let err = fails(overlay, "about 7 days").await;
     assert!(matches!(err, RewindError::NotFound { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
 }
 
 #[tokio::test]
@@ -104,6 +107,7 @@ async fn transaction_that_succeeded() {
         .rewrite_result("getTransaction", transaction("status", json!("SUCCESS")));
     let err = fails(overlay, "succeeded on-chain").await;
     assert!(matches!(err, RewindError::NotAFailure { .. }));
+    assert_eq!(err.stage(), Stage::Decode);
 }
 
 #[tokio::test]
@@ -130,6 +134,7 @@ async fn transaction_that_is_not_soroban() {
         });
     let err = fails(overlay, "is not a Soroban transaction").await;
     assert!(matches!(err, RewindError::NotSoroban { .. }));
+    assert_eq!(err.stage(), Stage::Decode);
 }
 
 #[tokio::test]
@@ -146,6 +151,7 @@ async fn transaction_that_never_reached_the_host() {
         });
     let err = fails(overlay, "failed before it reached the Soroban host").await;
     assert!(matches!(err, RewindError::NeverReachedHost { .. }));
+    assert_eq!(err.stage(), Stage::Decode);
 }
 
 #[tokio::test]
@@ -173,6 +179,7 @@ async fn transaction_outside_its_time_bounds_never_reached_the_host() {
             "{name}: {err:?}"
         );
         assert_eq!(err.kind(), "never_reached_host");
+        assert_eq!(err.stage(), Stage::Decode);
         assert!(err.to_string().contains(name), "{err}");
     }
 }
@@ -192,6 +199,7 @@ async fn transaction_from_another_protocol() {
         });
     let err = fails(overlay, &format!("ran on protocol {unsupported}")).await;
     assert!(matches!(err, RewindError::ProtocolMismatch { .. }));
+    assert_eq!(err.stage(), Stage::Replay);
 }
 
 #[tokio::test]
@@ -201,6 +209,7 @@ async fn ledger_outside_the_retention_window() {
         .rewrite_result("getLedgers", |result| result["ledgers"] = json!([]));
     let err = fails(overlay, "no ledger 5672381 in its retention window").await;
     assert!(matches!(err, RewindError::LedgerUnavailable { .. }));
+    assert_eq!(err.stage(), Stage::Reconstruct);
 }
 
 #[tokio::test]
@@ -214,6 +223,7 @@ async fn network_setting_missing() {
     );
     let err = fails(overlay, "did not return the network setting").await;
     assert!(matches!(err, RewindError::ConfigSettingMissing { .. }));
+    assert_eq!(err.stage(), Stage::Reconstruct);
 }
 
 #[tokio::test]
@@ -235,6 +245,7 @@ async fn durable_entry_without_a_ttl() {
         });
     let err = fails(overlay, "without").await;
     assert!(matches!(err, RewindError::MissingTtl { .. }), "{err:?}");
+    assert_eq!(err.stage(), Stage::Reconstruct);
 }
 
 #[tokio::test]
@@ -252,7 +263,53 @@ async fn rpc_error_response() {
             ..
         }
     ));
+    assert_eq!(err.stage(), Stage::Fetch);
     assert!(err.to_string().ends_with("(JSON-RPC code -32602)"), "{err}");
+}
+
+/// The errors that come from the command line, the environment or the output
+/// need no run to be built, so their stage is checked here.
+#[test]
+fn errors_outside_the_run_name_their_stage() {
+    let hash: sororewind::TxHash = "ab".repeat(32).parse().unwrap();
+    let cases = [
+        (
+            RewindError::InvalidHash {
+                hash: "zz".to_string(),
+            },
+            Stage::Input,
+        ),
+        (RewindError::MissingHash, Stage::Input),
+        (
+            RewindError::InvalidRpcUrl {
+                reason: "no host".to_string(),
+            },
+            Stage::Input,
+        ),
+        (
+            RewindError::InvalidOption {
+                name: "SOROREWIND_TIMEOUT",
+                reason: "not a number".to_string(),
+            },
+            Stage::Input,
+        ),
+        (
+            RewindError::FixtureHashMismatch {
+                dir: PathBuf::from("fixtures/x"),
+                recorded: hash.clone(),
+                requested: hash,
+            },
+            Stage::Input,
+        ),
+        (
+            RewindError::Output("broken pipe".to_string()),
+            Stage::Output,
+        ),
+        (RewindError::Replay("no host".to_string()), Stage::Replay),
+    ];
+    for (err, stage) in cases {
+        assert_eq!(err.stage(), stage, "{err}");
+    }
 }
 
 #[tokio::test]
@@ -262,6 +319,7 @@ async fn transaction_with_an_unknown_status() {
         .rewrite_result("getTransaction", transaction("status", json!("PENDING")));
     let err = fails(overlay, "a status this build of sororewind does not know").await;
     assert!(matches!(err, RewindError::Rpc { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
 }
 
 #[tokio::test]
@@ -278,6 +336,7 @@ async fn ledger_outside_the_rpc_window() {
         matches!(err, RewindError::LedgerUnavailable { .. }),
         "{err:?}"
     );
+    assert_eq!(err.stage(), Stage::Reconstruct);
 }
 
 #[tokio::test]
@@ -289,6 +348,7 @@ async fn rpc_response_missing_a_field() {
         });
     let err = fails(overlay, "missing `envelopeXdr`").await;
     assert!(matches!(err, RewindError::MissingField { .. }));
+    assert_eq!(err.stage(), Stage::Decode);
 }
 
 #[tokio::test]
@@ -298,6 +358,7 @@ async fn rpc_response_with_undecodable_xdr() {
         .rewrite_result("getTransaction", transaction("envelopeXdr", json!("AAAA")));
     let err = fails(overlay, "failed to decode").await;
     assert!(matches!(err, RewindError::XdrDecode { .. }));
+    assert_eq!(err.stage(), Stage::Decode);
 }
 
 #[tokio::test]
@@ -316,6 +377,7 @@ async fn unreachable_rpc() {
     )
     .await;
     assert!(matches!(err, RewindError::RpcUnreachable { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
 }
 
 #[tokio::test]
@@ -325,6 +387,7 @@ async fn wasm_debug_file_that_does_not_exist() {
     let rpc = Overlay::on(FIXTURE).await.client();
     let err = fails_with(&rpc, &request, "could not read --wasm-debug").await;
     assert!(matches!(err, RewindError::WasmFile { .. }));
+    assert_eq!(err.stage(), Stage::Input);
 }
 
 #[tokio::test]
@@ -334,6 +397,7 @@ async fn fixture_directory_that_does_not_exist() {
         .err()
         .unwrap();
     assert!(matches!(err, RewindError::FixtureInvalid { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
     assert!(err.to_string().contains("no such directory"), "{err}");
     assert_eq!(sororewind::exit_code(&Err(err)), 1);
 }
@@ -349,6 +413,7 @@ async fn fixture_in_another_layout() {
     let err = FixtureTransport::open(dir.path()).await.err().unwrap();
     assert!(err.to_string().contains("re-record it"), "{err}");
     assert!(matches!(err, RewindError::FixtureInvalid { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
     assert_eq!(sororewind::exit_code(&Err(err)), 1);
 }
 
@@ -367,4 +432,5 @@ async fn fixture_missing_a_response() {
     );
     let err = fails_with(&rpc, &request, "getTransaction").await;
     assert!(matches!(err, RewindError::FixtureMissing { .. }));
+    assert_eq!(err.stage(), Stage::Fetch);
 }
