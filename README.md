@@ -132,7 +132,7 @@ it has something to say, or when you ask for more.
 | Section | What it tells you |
 |---------|-------------------|
 | **Header** | The hash, the network, and the ledger it ran in, with protocol and close time. |
-| **Verdict** | `✓ replay matches network`: trust everything below. `⚠ replay diverged`: the local run disagrees, and the line says how (another result code, or the same code with another error). A separate warning appears if the network's settings changed since. |
+| **Verdict** | `✓ replay matches network`: trust everything below. `⚠ replay diverged`: the local run disagrees, and the line says how (another result code, or the same code with another error, resource fee or events). On a divergence, `probably caused by:` lists the changed entries and settings, and the first call where the two runs differ, strongest first; when there are none it says so. A separate warning appears if the network's settings changed since. |
 | **Where it broke** | The error that ended it: its type (contract, auth, storage, budget, …), the contract's own error name when it declares one, the logged message, and the function and call depth that raised it. |
 | **Call tree** | Every contract call, in order, with decoded arguments. Nested calls hang off `├─` / `└─`, `✗` marks the failing call, and `·` lines are the contract's logs. `(recovered by try_call)` marks a failure the caller caught and moved past; `(no return)` marks a call the transaction died inside. |
 | **Footprint** | How many entries were touched, which changed since (value, TTL, archived), how many were missing, and whether the random seed was derived or fixed. Shown on a divergence, and always with `-v`. |
@@ -198,7 +198,9 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 | `feeBump` | Whether it was wrapped in a fee-bump; `hash` is then whichever of the outer and inner hashes you asked for. |
 | `rpc` | Where the responses came from: scheme and host only (a path or query may hold an API key), or `fixture:<dir>`. |
 | `status` | Always `failed`: sororewind only replays failures. |
-| `fidelity.match`, `fidelity.divergence` | Whether the replay matched, and if not, how it diverged. |
+| `fidelity.match`, `fidelity.divergence` | Whether the replay matched, and if not, how it diverged: `result`, `error`, `fee` or `events`. |
+| `probableCauses` | On a divergence, the evidence that probably caused it, strongest first: `{ kind, subject, detail }` with `kind` one of `entry_drifted`, `setting_drifted`, `call_divergence`, `entry_ttl_drifted`, `entry_archived`, `entry_drift_unknown`, `setting_drift_unknown`, `entry_ext_missing`, `prng_seed_fixed`. Empty on a match, and when nothing points anywhere. |
+| `fee` | The non-refundable resource fee the network recorded and the one the replay computes, in stroops (`onchainNonRefundable`, `localNonRefundable`), plus the refundable fee and rent the network kept. |
 | `result.onchain`, `result.local` | Each side's result, as `{ code, resultHash }`. |
 | `failure` | The error that ended it, with its contract, function and depth; `null` when there is none. `failure.cause` is the contract error a host error answered, when there is one. |
 | `calls` | The call tree, one entry per call, with arguments, return value and logs. `args` and `returned` are shortened for reading; `argsXdr` and `returnedXdr` hold them whole, as base64 `ScVal` XDR. |
@@ -230,6 +232,19 @@ as text.
 
 A divergence (exit `2`) means the local run didn't reproduce what the network
 recorded. Here is what can cause it.
+
+**What is compared, and what is not.** The verdict is not only the result
+code. Each signal the network records is either compared (a mismatch is a
+divergence) or shown for information:
+
+| Signal | Treatment |
+|--------|-----------|
+| Result and error | Compared (`result`, `error`). |
+| Non-refundable resource fee | Compared (`fee`). It depends only on the declared resources, the transaction's size and the network's fee settings, which the replay has, and is priced as stellar-core does for the ledger's protocol. |
+| Diagnostic events | Compared (`events`). The replay's events must be the start of the network's: core appends its own after the host's, so the replay's list may be shorter, never different. |
+| Refundable fee and rent | Shown, not compared. A failed transaction is refunded all of it, and rent is priced from a moving window (below). |
+| CPU and memory | Shown, not compared. The network's metrics include work core does around the host, so a faithful replay reports slightly different figures (up to about 1.5 % in the recorded fixtures). |
+| Ledger changes and contract events | Not compared. A failed transaction commits neither, so there is nothing on the network to compare with. A replay that succeeds where the network failed is already a result divergence. |
 
 **The state moved on and couldn't be rebuilt.** An RPC only serves the
 *current* value of a ledger entry, and busy contracts (price oracles, say)

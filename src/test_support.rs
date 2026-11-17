@@ -26,8 +26,8 @@ use crate::codec;
 use crate::error::{Result, RewindError};
 use crate::replay::{BudgetUse, Fidelity, PrngSeed};
 use crate::report::{
-    Diagnostics, FootprintReport, Report, ResultPair, ResultSummary, SCHEMA_VERSION, TtlDriftEntry,
-    TtlDriftReason,
+    Diagnostics, FeeReport, FootprintReport, Report, ResultPair, ResultSummary, SCHEMA_VERSION,
+    TtlDriftEntry, TtlDriftReason,
 };
 use crate::rpc::{RawLedgerEntry, RawTransaction, TxStatus};
 use crate::story::Story;
@@ -521,6 +521,7 @@ pub fn decoded_tx() -> DecodedTx {
         restored_rw_indices: Vec::new(),
         onchain_result: InvokeHostFunctionResult::Trapped,
         onchain_diagnostic_events: Vec::new(),
+        onchain_fee: None,
     }
 }
 
@@ -617,6 +618,13 @@ pub fn sample_report() -> Report {
             network_cpu_insns: Some(1_234_567),
             network_mem_bytes: Some(1_048_576),
         },
+        fee: FeeReport {
+            onchain_non_refundable: Some(8_521),
+            local_non_refundable: 8_521,
+            onchain_refundable: Some(0),
+            onchain_rent: Some(0),
+        },
+        probable_causes: Vec::new(),
         footprint: FootprintReport {
             entries: 4,
             missing: 1,

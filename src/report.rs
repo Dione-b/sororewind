@@ -9,6 +9,7 @@
 use serde::Serialize;
 use stellar_xdr::InvokeHostFunctionResult;
 
+use crate::culprit::Culprit;
 use crate::display;
 use crate::hash::TxHash;
 use crate::replay::{BudgetUse, Fidelity, PrngSeed};
@@ -53,8 +54,14 @@ pub struct Report {
 
     /// CPU and memory the replay used, against its limits and the network's.
     pub budget: BudgetUse,
+    /// The resource fee the network recorded next to the one the replay
+    /// computes.
+    pub fee: FeeReport,
     /// How faithfully the footprint's entries could be put back as they were.
     pub footprint: FootprintReport,
+    /// What probably caused a divergence, strongest evidence first; empty on
+    /// a match, and when a divergence leaves no evidence to point at.
+    pub probable_causes: Vec<Culprit>,
     /// Whether the host's PRNG seed matched the network's.
     pub prng_seed: PrngSeed,
     /// The diagnostic events of both runs.
@@ -88,6 +95,29 @@ pub struct ResultPair {
     pub onchain: ResultSummary,
     /// What the local replay produced.
     pub local: ResultSummary,
+}
+
+/// The resource fee, as the network recorded it and as the replay computes it,
+/// in stroops.
+///
+/// Only the non-refundable part is compared (see [`Divergence::Fee`]); the
+/// refundable part and rent are shown for context: a failed transaction is
+/// refunded all of it.
+///
+/// [`Divergence::Fee`]: crate::replay::Divergence::Fee
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeeReport {
+    /// The non-refundable resource fee the network charged; `None` when the
+    /// RPC sent no transaction meta, or one without a fee breakdown.
+    pub onchain_non_refundable: Option<i64>,
+    /// The non-refundable resource fee the replay computes for the declared
+    /// resources.
+    pub local_non_refundable: i64,
+    /// The refundable fee the network kept, after the refund.
+    pub onchain_refundable: Option<i64>,
+    /// The rent fee the network kept, after the refund.
+    pub onchain_rent: Option<i64>,
 }
 
 /// An `InvokeHostFunctionResult`, structured.

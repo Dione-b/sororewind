@@ -213,11 +213,6 @@ fn fidelity(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
                     "⚠ replay diverged from the network ({onchain} vs {local})"
                 ))
             )?;
-            writeln!(
-                out,
-                "{}",
-                p.dim("  the ledger has almost certainly moved since this transaction ran")
-            )?;
         }
         Some(Divergence::Error) => {
             writeln!(
@@ -231,12 +226,48 @@ fn fidelity(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
                 p.dim("  the replay failed, but not the way the transaction did on-chain")
             )?;
         }
+        Some(Divergence::Fee) => {
+            writeln!(
+                out,
+                "{}",
+                p.yellow(
+                    "⚠ replay diverged from the network (same result, different resource fee)"
+                )
+            )?;
+            let onchain = report
+                .fee
+                .onchain_non_refundable
+                .map_or_else(|| "unknown".to_string(), |fee| fee.to_string());
+            writeln!(
+                out,
+                "{}",
+                p.dim(&format!(
+                    "  non-refundable fee: {onchain} stroops on-chain, {} locally",
+                    report.fee.local_non_refundable
+                ))
+            )?;
+        }
+        Some(Divergence::Events) => {
+            writeln!(
+                out,
+                "{}",
+                p.yellow("⚠ replay diverged from the network (same result, different events)")
+            )?;
+            writeln!(
+                out,
+                "{}",
+                p.dim("  the replay's diagnostic events are not the start of the network's")
+            )?;
+        }
     }
     writeln!(
         out,
         "{}",
         p.dim(&format!("  on-chain  {onchain}\n  local     {local}"))
     )?;
+    if !report.fidelity.matches {
+        probable_causes(out, report, p)?;
+    }
     if !report.footprint.config_drifted.is_empty() {
         writeln!(
             out,
@@ -269,6 +300,46 @@ fn fidelity(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
     }
     writeln!(out)
 }
+
+/// What probably explains a divergence, or a plain statement that nothing in
+/// the run does.
+fn probable_causes(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
+    let causes = &report.probable_causes;
+    if causes.is_empty() {
+        return writeln!(
+            out,
+            "{}",
+            p.dim(
+                "  no entry or setting is known to have changed and no call differs: \
+                 nothing in this run explains the divergence"
+            )
+        );
+    }
+    writeln!(out, "{}", p.yellow("  probably caused by:"))?;
+    for (rank, cause) in causes.iter().take(CAUSE_LINES).enumerate() {
+        writeln!(
+            out,
+            "    {}. {} {}",
+            rank + 1,
+            safe(&cause.subject),
+            p.dim(&format!("— {}", cause.detail))
+        )?;
+    }
+    if causes.len() > CAUSE_LINES {
+        writeln!(
+            out,
+            "    {}",
+            p.dim(&format!(
+                "… and {} more (--json lists them all)",
+                causes.len() - CAUSE_LINES
+            ))
+        )?;
+    }
+    Ok(())
+}
+
+/// How many candidates the summary names before it points at `--json`.
+const CAUSE_LINES: usize = 3;
 
 fn where_it_broke(
     out: &mut impl Write,
@@ -944,8 +1015,46 @@ mod tests {
         }];
         report.prng_seed = PrngSeed::Fixed;
         report.story = crate::story::Story::default();
+        report.probable_causes = vec![
+            crate::culprit::Culprit {
+                kind: crate::culprit::CulpritKind::EntryDrifted,
+                subject: "account GAAA".to_string(),
+                detail: "changed after the transaction ran".to_string(),
+            },
+            crate::culprit::Culprit {
+                kind: crate::culprit::CulpritKind::SettingDrifted,
+                subject: "StateArchival".to_string(),
+                detail: "network setting changed since".to_string(),
+            },
+        ];
 
         insta::assert_snapshot!("human_diverged", human(&report, false, Detail::Summary));
+
+        // With no evidence, the report says so instead of guessing.
+        let mut unexplained = report.clone();
+        unexplained.probable_causes.clear();
+        let text = human(&unexplained, false, Detail::Summary);
+        assert!(
+            text.contains("nothing in this run explains the divergence"),
+            "{text}"
+        );
+        assert!(!text.contains("probably caused by"), "{text}");
+
+        report.fidelity = Fidelity::diverged(Divergence::Fee);
+        report.fee.onchain_non_refundable = Some(9_000);
+        let text = human(&report, false, Detail::Summary);
+        assert!(
+            text.contains("same result, different resource fee"),
+            "{text}"
+        );
+        assert!(
+            text.contains("9000 stroops on-chain, 8521 locally"),
+            "{text}"
+        );
+
+        report.fidelity = Fidelity::diverged(Divergence::Events);
+        let text = human(&report, false, Detail::Summary);
+        assert!(text.contains("same result, different events"), "{text}");
 
         report.fidelity = Fidelity::diverged(Divergence::Error);
         let text = human(&report, false, Detail::Summary);

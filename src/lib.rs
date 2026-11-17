@@ -18,6 +18,7 @@
 
 pub mod cli;
 pub mod codec;
+pub mod culprit;
 pub mod discover;
 pub mod display;
 pub mod error;

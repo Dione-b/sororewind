@@ -7,13 +7,14 @@
 
 use std::path::PathBuf;
 
+use crate::culprit;
 use crate::display;
 use crate::error::{Result, Retention, RewindError};
 use crate::hash::TxHash;
 use crate::network::{Network, NetworkId};
 use crate::replay::{self, Fidelity, ReplayOutcome};
 use crate::report::{
-    Diagnostics, FootprintReport, Report, ResultPair, SCHEMA_VERSION, TtlDriftEntry,
+    Diagnostics, FeeReport, FootprintReport, Report, ResultPair, SCHEMA_VERSION, TtlDriftEntry,
 };
 use crate::rpc::{RawTransaction, RpcClient, TxStatus};
 use crate::state::{self, LedgerContext, Reconstructed};
@@ -252,6 +253,23 @@ struct Replayed<'a> {
 }
 
 fn assemble(run: Replayed<'_>) -> Report {
+    let footprint = footprint_report(
+        &run.state,
+        run.ledger.sequence,
+        [&run.tx.onchain_result, &run.outcome.result]
+            .contains(&&InvokeHostFunctionResult::InsufficientRefundableFee),
+    );
+    let probable_causes = if run.fidelity.matches {
+        Vec::new()
+    } else {
+        culprit::find(
+            &footprint,
+            run.outcome.prng_seed,
+            &run.tx,
+            &run.outcome,
+            &run.story,
+        )
+    };
     Report {
         schema_version: SCHEMA_VERSION,
         hash: run.tx.hash.clone(),
@@ -272,12 +290,14 @@ fn assemble(run: Replayed<'_>) -> Report {
         },
         story: run.story,
         budget: run.outcome.budget,
-        footprint: footprint_report(
-            &run.state,
-            run.ledger.sequence,
-            [&run.tx.onchain_result, &run.outcome.result]
-                .contains(&&InvokeHostFunctionResult::InsufficientRefundableFee),
-        ),
+        fee: FeeReport {
+            onchain_non_refundable: run.tx.onchain_fee.map(|fee| fee.non_refundable),
+            local_non_refundable: run.outcome.non_refundable_fee,
+            onchain_refundable: run.tx.onchain_fee.map(|fee| fee.refundable),
+            onchain_rent: run.tx.onchain_fee.map(|fee| fee.rent),
+        },
+        footprint,
+        probable_causes,
         prng_seed: run.outcome.prng_seed,
         diagnostics: Diagnostics {
             onchain: lines(&run.tx.onchain_diagnostic_events),

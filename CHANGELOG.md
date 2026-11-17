@@ -8,6 +8,20 @@ an incompatible change to the JSON bumps its `schemaVersion`.
 
 ## [Unreleased]
 
+### Added
+
+- The fidelity check goes beyond the result code: a replay also diverges when
+  the non-refundable resource fee it computes differs from the one the
+  network recorded (`fidelity.divergence: "fee"`), or when its diagnostic
+  events are not the start of the network's (`"events"`). CPU, memory, rent
+  and ledger changes stay informational; the README's "Why a replay can
+  diverge" says why.
+- A divergence names its probable causes: the entries that changed and could
+  not be rebuilt, settings changed since, the first call where the two call
+  trees differ, and what the RPC left unknown, strongest first. The text
+  report prints them under the verdict and says plainly when there are none.
+- New JSON fields, all additive: `probableCauses` and `fee`.
+
 ## [0.1.1] - 2026-11-12
 
 ### Changed

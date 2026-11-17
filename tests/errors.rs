@@ -149,6 +149,35 @@ async fn transaction_that_never_reached_the_host() {
 }
 
 #[tokio::test]
+async fn transaction_outside_its_time_bounds_never_reached_the_host() {
+    // A transaction that expired (`txTooLate`) or was submitted early
+    // (`txTooEarly`) is rejected by core's validation, before the host. Each
+    // is named by its own code, so the report says which it was.
+    for (code, name) in [
+        (TransactionResultResult::TxTooLate, "TxTooLate"),
+        (TransactionResultResult::TxTooEarly, "TxTooEarly"),
+    ] {
+        let overlay = Overlay::on(FIXTURE)
+            .await
+            .rewrite_result("getTransaction", move |result| {
+                let rejected = TransactionResult {
+                    fee_charged: 100,
+                    result: code.clone(),
+                    ext: TransactionResultExt::V0,
+                };
+                result["resultXdr"] = b64(&rejected).into();
+            });
+        let err = fails(overlay, "failed before it reached the Soroban host").await;
+        assert!(
+            matches!(&err, RewindError::NeverReachedHost { code, .. } if *code == name),
+            "{name}: {err:?}"
+        );
+        assert_eq!(err.kind(), "never_reached_host");
+        assert!(err.to_string().contains(name), "{err}");
+    }
+}
+
+#[tokio::test]
 async fn transaction_from_another_protocol() {
     // A protocol newer than any embedded host.
     let unsupported = sororewind::host::newest().protocol + 1;
