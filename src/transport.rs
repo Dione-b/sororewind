@@ -57,6 +57,18 @@ pub trait Transport: Send + Sync {
 
     /// Where the responses come from, for the report and for error messages.
     fn origin(&self) -> String;
+
+    /// Disk cache directory for immutable contract WASM, when enabled.
+    #[doc(hidden)]
+    fn cache_dir(&self) -> Option<&Path> {
+        None
+    }
+
+    /// Redacted endpoints to include when the requested history is unavailable.
+    #[doc(hidden)]
+    fn fallback_origins(&self) -> Option<String> {
+        None
+    }
 }
 
 impl<T: Transport + ?Sized> Transport for Box<T> {
@@ -66,6 +78,10 @@ impl<T: Transport + ?Sized> Transport for Box<T> {
 
     fn origin(&self) -> String {
         (**self).origin()
+    }
+
+    fn fallback_origins(&self) -> Option<String> {
+        (**self).fallback_origins()
     }
 }
 
@@ -200,11 +216,15 @@ fn rate_limit_error(text: &str) -> Option<(i64, String)> {
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    is_rate_limit(code, message).then(|| (code, message.to_string()))
+}
+
+pub(crate) fn is_rate_limit(code: i64, message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     let named = ["rate limit", "rate-limit", "ratelimit", "too many requests"]
         .iter()
         .any(|phrase| lower.contains(phrase));
-    (matches!(code, 429 | -32005) || named).then(|| (code, message.to_string()))
+    matches!(code, 429 | -32005) || named || lower.starts_with("http 429")
 }
 
 /// What became of one attempt at a call.
@@ -836,6 +856,10 @@ impl<T: Transport> Transport for Recording<T> {
 
     fn origin(&self) -> String {
         self.inner.origin()
+    }
+
+    fn fallback_origins(&self) -> Option<String> {
+        self.inner.fallback_origins()
     }
 }
 

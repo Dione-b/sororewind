@@ -26,6 +26,45 @@ jobs:
     if: github.event_name != 'schedule'
     uses: ./.github/workflows/checks.yml
 
+  # Compare on the same runner to keep hardware variation out of the baseline.
+  benchmarks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Compare offline replay benchmarks
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fetch --locked
+          if git cat-file -e "$BASE_SHA:benches/replay.rs" 2>/dev/null; then
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+            (cd "$RUNNER_TEMP/base" && cargo fetch --locked && cargo bench --locked --offline --bench replay -- --save-baseline base)
+            cargo bench --locked --offline --bench replay -- --baseline-lenient base 2>&1 | tee benchmark-results.txt
+          else
+            cargo bench --locked --offline --bench replay -- --save-baseline base 2>&1 | tee benchmark-results.txt
+          fi
+          if grep -q 'Performance has regressed' benchmark-results.txt; then
+            echo "::warning::Replay benchmarks regressed beyond the 15% noise threshold."
+            echo 'Criterion reported a replay regression above 15%. See the job log for affected stages.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: offline-replay-benchmarks
+          path: |
+            benchmark-results.txt
+            target/criterion
+
   # Advisories, licences, banned crates and sources; see deny.toml. Nightly
   # too: an advisory can be published against an unchanged lockfile.
   deny:

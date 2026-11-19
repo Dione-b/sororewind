@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 use crate::error::{Result, RewindError};
 use crate::hash::TxHash;
@@ -12,13 +12,15 @@ use crate::pipeline::Request;
 use crate::render::{ColorChoice, Format};
 use crate::rpc::RpcClient;
 use crate::transport::{
-    FixtureTransport, HttpTransport, Recording, RecordingHandle, TransportConfig,
+    FixtureTransport, HttpTransport, Recording, RecordingHandle, Transport, TransportConfig,
 };
 
 /// Replay a failed Soroban transaction locally and narrate the call tree.
 #[derive(Debug, Parser)]
 #[command(
     name = "sororewind",
+    subcommand_negates_reqs = true,
+    args_conflicts_with_subcommands = true,
     about = "Explain a failed Soroban transaction by replaying it locally",
     long_about = "sororewind fetches a failed Soroban transaction from an RPC, rebuilds the ledger \
 state it ran against, re-executes it with the same Soroban host, and prints a narrated call tree \
@@ -45,11 +47,20 @@ pub struct Cli {
     #[arg(long, short = 'n', value_enum)]
     pub network: Option<Network>,
 
-    /// Use this RPC endpoint instead of the default for --network. Prefer the
+    /// Use this RPC endpoint instead of the default for --network. Repeat for
+    /// fallback endpoints in order. Prefer the
     /// SOROREWIND_RPC_URL environment variable for a URL that holds an API
     /// key: arguments end up in shell history and process listings
     #[arg(long, value_name = "URL", conflicts_with = "fixture", value_parser = parse_rpc_url)]
-    pub rpc_url: Option<String>,
+    pub rpc_url: Vec<String>,
+
+    /// Read and write immutable RPC responses in this directory
+    #[arg(long, value_name = "DIR", conflicts_with_all = ["no_cache", "fixture", "record"])]
+    pub cache_dir: Option<PathBuf>,
+
+    /// Disable the disk cache for live RPC responses
+    #[arg(long)]
+    pub no_cache: bool,
 
     /// Seconds one RPC request may take before it is abandoned and retried
     /// [default: 30; env SOROREWIND_TIMEOUT]
@@ -73,6 +84,10 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "json")]
     pub format: Option<Format>,
 
+    /// Stop after decode, state reconstruction, or replay and print that stage
+    #[arg(long, value_enum, conflicts_with = "record")]
+    pub stage: Option<crate::pipeline::InspectStage>,
+
     /// Same as --format json
     #[arg(long)]
     pub json: bool,
@@ -84,8 +99,8 @@ pub struct Cli {
 
     /// When to colour the narrative: auto colours a terminal, and honours
     /// NO_COLOR, CLICOLOR_FORCE and TERM=dumb
-    #[arg(long, value_enum, value_name = "WHEN", default_value = "auto")]
-    pub color: ColorChoice,
+    #[arg(long, value_enum, value_name = "WHEN")]
+    pub color: Option<ColorChoice>,
 
     /// Same as --color never
     #[arg(long, conflicts_with = "color")]
@@ -119,6 +134,25 @@ pub struct Cli {
     /// Print a man page (roff) and exit, e.g. `sororewind --man > sororewind.1`
     #[arg(long, exclusive = true)]
     pub man: bool,
+
+    /// Compare saved replay reports.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    #[arg(skip)]
+    settings: crate::config::Settings,
+}
+
+/// Operations on saved replay reports.
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Compare two JSON reports from replay runs.
+    Diff {
+        /// The first JSON report.
+        before: PathBuf,
+        /// The second JSON report.
+        after: PathBuf,
+    },
 }
 
 /// `0.1.0 (protocols 29 (soroban-env-host 29.0.2), 30 (...); commit
@@ -286,6 +320,71 @@ impl Cli {
         Cli::from_arg_matches(&matches)
     }
 
+    /// Load project and user defaults, applying environment and command-line overrides.
+    pub fn load_config(&mut self) -> Result<()> {
+        self.apply_settings(crate::config::Settings::discover()?, |name| {
+            std::env::var(name).ok()
+        })
+    }
+
+    fn apply_settings(
+        &mut self,
+        settings: crate::config::Settings,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Result<()> {
+        fn choose<T: ValueEnum>(
+            flag: Option<T>,
+            name: &'static str,
+            env: Option<String>,
+            setting: Option<String>,
+        ) -> Result<Option<T>> {
+            if flag.is_some() {
+                return Ok(flag);
+            }
+            env.filter(|text| !text.trim().is_empty())
+                .or(setting)
+                .map(|text| {
+                    T::from_str(text.trim(), false).map_err(|_| RewindError::InvalidOption {
+                        name,
+                        reason: format!(
+                            "expected one of {}",
+                            T::value_variants()
+                                .iter()
+                                .filter_map(ValueEnum::to_possible_value)
+                                .map(|v| v.get_name().to_owned())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    })
+                })
+                .transpose()
+        }
+        self.network = choose(
+            self.network,
+            "network",
+            env("SOROREWIND_NETWORK"),
+            settings.network.clone(),
+        )?;
+        if !self.json {
+            self.format = choose(
+                self.format,
+                "format",
+                env("SOROREWIND_FORMAT"),
+                settings.format.clone(),
+            )?;
+        }
+        if !self.no_color {
+            self.color = choose(
+                self.color,
+                "color",
+                env("SOROREWIND_COLOR"),
+                settings.color.clone(),
+            )?;
+        }
+        self.settings = settings;
+        Ok(())
+    }
+
     /// The output format the flags amount to.
     pub fn output_format(&self) -> Format {
         if self.json {
@@ -300,7 +399,7 @@ impl Cli {
         if self.no_color {
             ColorChoice::Never
         } else {
-            self.color
+            self.color.unwrap_or_default()
         }
     }
 
@@ -318,22 +417,75 @@ impl Cli {
     /// The timeouts, retries and deadline the flags and the environment ask
     /// for; a flag wins over its variable.
     pub fn transport_config(&self) -> Result<TransportConfig> {
-        let env = |name: &str| std::env::var(name).ok();
+        self.transport_config_with(|name| std::env::var(name).ok())
+    }
+
+    fn transport_config_with(
+        &self,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Result<TransportConfig> {
+        let value = |name, setting: Option<u64>| {
+            env(name)
+                .filter(|text| !text.trim().is_empty())
+                .or_else(|| setting.map(|number| number.to_string()))
+        };
         let defaults = TransportConfig::default();
-        let timeout = number_setting(self.timeout, TIMEOUT_ENV, env(TIMEOUT_ENV), 1..=3600)?;
+        let timeout = number_setting(
+            self.timeout,
+            TIMEOUT_ENV,
+            value(TIMEOUT_ENV, self.settings.timeout),
+            1..=3600,
+        )?;
         let retries = number_setting(
             self.retries.map(u64::from),
             RETRIES_ENV,
-            env(RETRIES_ENV),
+            value(RETRIES_ENV, self.settings.retries),
             0..=10,
         )?;
-        let deadline = number_setting(self.deadline, DEADLINE_ENV, env(DEADLINE_ENV), 1..=86_400)?;
+        let deadline = number_setting(
+            self.deadline,
+            DEADLINE_ENV,
+            value(DEADLINE_ENV, self.settings.deadline),
+            1..=86_400,
+        )?;
         Ok(TransportConfig {
             timeout: timeout.map_or(defaults.timeout, std::time::Duration::from_secs),
             retries: retries.map_or(defaults.retries, |n| u32::try_from(n).unwrap_or(10)),
             deadline: deadline.map(std::time::Duration::from_secs),
             ..defaults
         })
+    }
+
+    fn rpc_urls(&self, env: Option<String>) -> Result<Vec<String>> {
+        if !self.rpc_url.is_empty() {
+            return Ok(self.rpc_url.clone());
+        }
+        let (source, candidates) = match rpc_url_from(env) {
+            Some(value) => (
+                RPC_URL_ENV,
+                value.split_whitespace().map(str::to_owned).collect(),
+            ),
+            None => (
+                "rpc-urls",
+                self.settings.rpc_urls.clone().unwrap_or_default(),
+            ),
+        };
+        if candidates.is_empty() {
+            return Ok(vec![
+                self.network
+                    .unwrap_or(Network::Testnet)
+                    .default_rpc_url()
+                    .into(),
+            ]);
+        }
+        candidates
+            .iter()
+            .map(|url| {
+                parse_rpc_url(url).map_err(|reason| RewindError::InvalidRpcUrl {
+                    reason: format!("{source}: {reason}"),
+                })
+            })
+            .collect()
     }
 
     /// Open the source of RPC responses the arguments ask for, and work out
@@ -352,33 +504,32 @@ impl Cli {
                 // clap requires a hash whenever there is no fixture; a `Cli`
                 // built by hand without one is the caller's invalid input.
                 let hash = self.tx_hash.clone().ok_or(RewindError::MissingHash)?;
-                let url = self
-                    .rpc_url
-                    .clone()
-                    .map(Ok)
-                    .or_else(|| {
-                        // The flag was validated by clap; the variable was not.
-                        rpc_url_from(std::env::var(RPC_URL_ENV).ok()).map(|url| {
-                            parse_rpc_url(&url).map_err(|reason| RewindError::InvalidRpcUrl {
-                                reason: format!("{RPC_URL_ENV}: {reason}"),
-                            })
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| {
-                        self.network
-                            .unwrap_or(Network::Testnet)
-                            .default_rpc_url()
-                            .to_string()
-                    });
-                let http = HttpTransport::with_config(url, self.transport_config()?)?;
+                let urls = self.rpc_urls(std::env::var(RPC_URL_ENV).ok())?;
+                let config = self.transport_config()?;
+                let mut transports = urls
+                    .into_iter()
+                    .map(|url| HttpTransport::with_config(url, config))
+                    .collect::<Result<Vec<_>>>()?;
+                let http: Box<dyn Transport> = if transports.len() == 1 {
+                    Box::new(transports.remove(0))
+                } else {
+                    Box::new(crate::fallback::Fallback::new(
+                        transports,
+                        self.network.map(|network| network.passphrase().to_owned()),
+                    ))
+                };
                 let rpc = match &self.record {
                     Some(dir) => {
                         let recorder = Recording::create(http, dir, &hash).await?;
                         recording = Some(recorder.handle());
                         RpcClient::new(recorder)
                     }
-                    None => RpcClient::new(http),
+                    None => match self.cache_dir.clone().or_else(crate::cache::default_dir) {
+                        Some(dir) if !self.no_cache => {
+                            RpcClient::new(crate::cache::Cache::new(http, dir))
+                        }
+                        _ => RpcClient::new(http),
+                    },
                 };
                 (rpc, hash)
             }
@@ -543,7 +694,11 @@ mod tests {
             "https://rpc.example/v1/key?x=1",
         ] {
             assert_eq!(
-                parse(&[HASH, "--rpc-url", url]).unwrap().rpc_url.as_deref(),
+                parse(&[HASH, "--rpc-url", url])
+                    .unwrap()
+                    .rpc_url
+                    .first()
+                    .map(String::as_str),
                 Some(url)
             );
         }
@@ -611,6 +766,52 @@ mod tests {
         );
         assert_eq!(rpc_url_from(Some("  ".to_string())), None);
         assert_eq!(rpc_url_from(None), None);
+    }
+
+    #[test]
+    fn transport_defaults_respect_flags_then_env_then_config() {
+        let config = || crate::config::Settings {
+            rpc_urls: Some(vec!["https://project.example/rpc".into()]),
+            timeout: Some(12),
+            retries: Some(1),
+            ..Default::default()
+        };
+        let mut cli = parse(&[
+            HASH,
+            "--timeout",
+            "7",
+            "--rpc-url",
+            "https://one.example",
+            "--rpc-url",
+            "https://two.example",
+        ])
+        .unwrap();
+        cli.apply_settings(config(), |_| None).unwrap();
+        assert_eq!(
+            cli.rpc_urls(Some("https://env.example".into())).unwrap(),
+            ["https://one.example", "https://two.example"]
+        );
+        let transport = cli
+            .transport_config_with(|name| match name {
+                TIMEOUT_ENV => Some("9".into()),
+                RETRIES_ENV => Some("2".into()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(transport.timeout.as_secs(), 7);
+        assert_eq!(transport.retries, 2);
+
+        let mut cli = parse(&[HASH]).unwrap();
+        cli.apply_settings(config(), |_| None).unwrap();
+        assert_eq!(
+            cli.rpc_urls(Some("https://one.example https://two.example".into()))
+                .unwrap(),
+            ["https://one.example", "https://two.example"]
+        );
+        assert_eq!(cli.rpc_urls(None).unwrap(), ["https://project.example/rpc"]);
+        let transport = cli.transport_config_with(|_| None).unwrap();
+        assert_eq!(transport.timeout.as_secs(), 12);
+        assert_eq!(transport.retries, 1);
     }
 
     #[test]

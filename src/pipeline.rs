@@ -43,6 +43,27 @@ pub struct Request {
 /// Replay `request.hash` against `rpc` and assemble the [`Report`]: fetch,
 /// decode, reconstruct the ledger state, replay, compare with what the
 /// network recorded, and narrate the outcome.
+///
+/// ```
+/// use std::path::Path;
+/// use sororewind::{FixtureTransport, Outcome, Request, RpcClient, run};
+///
+/// # #[tokio::main]
+/// # async fn main() -> sororewind::Result<()> {
+/// let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/contract-error");
+/// # if !path.is_dir() { return Ok(()); } // crates.io packages omit the recordings
+/// let fixture = FixtureTransport::open(path).await?;
+/// let request = Request {
+///     hash: fixture.hash_for(None)?,
+///     network: None,
+///     wasm_debug: None,
+/// };
+/// let report = run(&RpcClient::new(fixture), &request).await?;
+/// assert_eq!(report.outcome(), Outcome::Matched);
+/// assert!(report.story.failure.is_some());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn run(rpc: &RpcClient, request: &Request) -> Result<Report> {
     run_with_progress(rpc, request, &Silent).await
 }
@@ -53,22 +74,9 @@ pub async fn run_with_progress(
     request: &Request,
     progress: &dyn Progress,
 ) -> Result<Report> {
-    progress.step(Step::FetchingTransaction);
-    let fetched = fetch(rpc, request).await?;
-    let tx = tx::decode(&request.hash, &fetched.raw)?;
-    progress.step(Step::FetchingEntries {
-        count: tx.footprint_keys().len(),
-    });
-    // The header and the entries do not depend on each other: one round trip.
-    let (ledger, entries) = tokio::try_join!(
-        state::read_ledger(rpc, tx.ledger, &fetched.passphrase),
-        state::fetch(rpc, &tx),
-    )?;
-    let host = embedded_host(&tx, &ledger, &fetched.network)?;
-    progress.step(Step::RebuildingHistory);
-    let state = state::reconstruct(rpc, &tx, &ledger, entries).await?;
-    progress.step(Step::Replaying);
-    let outcome = replay::replay(host, &tx, &state, &ledger)?;
+    let (fetched, tx) = fetch_and_decode(rpc, request, progress).await?;
+    let (ledger, state, host) = reconstruct(rpc, &fetched, &tx, progress, true).await?;
+    let outcome = run_replay(host, &tx, &state, &ledger, progress)?;
     let fidelity = replay::compare(&tx, &outcome);
     let story = narrate(rpc, request, &state, &outcome).await?;
 
@@ -82,6 +90,188 @@ pub async fn run_with_progress(
         fidelity,
         story,
     }))
+}
+
+async fn fetch_and_decode(
+    rpc: &RpcClient,
+    request: &Request,
+    progress: &dyn Progress,
+) -> Result<(Fetched, DecodedTx)> {
+    progress.step(Step::FetchingTransaction);
+    let fetched = fetch(rpc, request).await?;
+    let tx = tx::decode(&request.hash, &fetched.raw)?;
+    Ok((fetched, tx))
+}
+
+async fn reconstruct(
+    rpc: &RpcClient,
+    fetched: &Fetched,
+    tx: &DecodedTx,
+    progress: &dyn Progress,
+    check_host: bool,
+) -> Result<(LedgerContext, Reconstructed, Option<&'static host::Host>)> {
+    progress.step(Step::FetchingEntries {
+        count: tx.footprint_keys().len(),
+    });
+    let (ledger, entries) = tokio::try_join!(
+        state::read_ledger(rpc, tx.ledger, &fetched.passphrase),
+        state::fetch(rpc, tx),
+    )?;
+    let host = check_host
+        .then(|| embedded_host(tx, &ledger, &fetched.network))
+        .transpose()?;
+    progress.step(Step::RebuildingHistory);
+    let state = state::reconstruct(rpc, tx, &ledger, entries).await?;
+    Ok((ledger, state, host))
+}
+
+fn run_replay(
+    host: Option<&host::Host>,
+    tx: &DecodedTx,
+    state: &Reconstructed,
+    ledger: &LedgerContext,
+    progress: &dyn Progress,
+) -> Result<ReplayOutcome> {
+    let host = host.ok_or_else(|| RewindError::Replay("no host was selected".into()))?;
+    progress.step(Step::Replaying);
+    replay::replay(host, tx, state, ledger)
+}
+
+/// A pipeline stage to inspect without running later stages.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum InspectStage {
+    /// Fetch and decode the transaction and its footprint.
+    Decode,
+    /// Reconstruct the ledger context and footprint entries.
+    State,
+    /// Run the local host and stop before fidelity comparison and narration.
+    Replay,
+}
+
+/// Execute only as far as the requested stage and return its inspection document.
+#[doc(hidden)]
+pub async fn inspect(
+    rpc: &RpcClient,
+    request: &Request,
+    progress: &dyn Progress,
+    stage: InspectStage,
+) -> Result<serde_json::Value> {
+    use crate::codec::b64_encode;
+    use serde_json::json;
+
+    let (fetched, tx) = fetch_and_decode(rpc, request, progress).await?;
+    if stage == InspectStage::Decode {
+        let label = |key: &stellar_xdr::LedgerKey| -> Result<serde_json::Value> {
+            Ok(json!({
+                "key": display::ledger_key(key),
+                "keyXdr": b64_encode(&crate::codec::encode(key, "footprint key")?),
+            }))
+        };
+        let footprint = &tx.resources.footprint;
+        let invocation = match &tx.host_function {
+            stellar_xdr::HostFunction::InvokeContract(call) => Some(json!({
+                "contract": strkey::address(&call.contract_address),
+                "function": call.function_name.to_string(),
+                "arguments": call.args.iter().map(display::scval).collect::<Vec<_>>(),
+            })),
+            _ => None,
+        };
+        return Ok(json!({
+            "stage": "decode", "hash": tx.hash, "ledger": tx.ledger, "feeBump": tx.fee_bump,
+            "applicationOrder": tx.application_order, "envelopeSize": tx.envelope_size,
+            "network": fetched.network.to_string(), "resourceFee": tx.resource_fee,
+            "onchainResult": crate::report::ResultSummary::from(&tx.onchain_result),
+            "sourceAccountXdr": b64_encode(&tx.encoded_source_account()?),
+            "hostFunction": tx.host_function.name(),
+            "invocation": invocation,
+            "sourceAccount": strkey::account_id(&tx.source_account),
+            "hostFunctionXdr": b64_encode(&tx.encoded_host_function()?),
+            "resourcesXdr": b64_encode(&tx.encoded_resources()?),
+            "authXdr": tx.encoded_auth()?.iter().map(|entry| b64_encode(entry)).collect::<Vec<_>>(),
+            "restoredReadWriteIndices": tx.restored_rw_indices,
+            "readOnly": footprint.read_only.iter().map(label).collect::<Result<Vec<_>>>()?,
+            "readWrite": footprint.read_write.iter().map(label).collect::<Result<Vec<_>>>()?,
+        }));
+    }
+
+    let (ledger, state, host) =
+        reconstruct(rpc, &fetched, &tx, progress, stage == InspectStage::Replay).await?;
+    if stage == InspectStage::State {
+        let entries: Vec<_> = state
+            .slots
+            .iter()
+            .map(|slot| {
+                let provenance = if slot.rebuilt {
+                    "rebuilt"
+                } else if slot.value_drifted(ledger.sequence) {
+                    "drifted"
+                } else if slot.drift_unknown() {
+                    "unknown"
+                } else {
+                    "current"
+                };
+                let live_until = match slot.liveness {
+                    state::Liveness::Live { live_until }
+                    | state::Liveness::Restored { live_until } => Some(live_until),
+                    _ => None,
+                };
+                json!({
+                    "key": display::ledger_key(&slot.key),
+                    "keyXdr": b64_encode(&slot.key_xdr),
+                    "entryXdr": slot.entry_xdr.as_deref().map(b64_encode),
+                    "lastModifiedLedger": slot.last_modified,
+                    "liveUntilLedger": live_until,
+                    "archived": slot.archived(),
+                    "missing": slot.missing(),
+                    "provenance": provenance,
+                })
+            })
+            .collect();
+        return Ok(json!({
+            "stage": "state", "hash": tx.hash, "ledger": ledger.sequence, "protocol": ledger.protocol,
+            "closeTime": ledger.close_time, "baseReserve": ledger.base_reserve,
+            "readOnly": state.read_only, "entries": entries,
+            "footprint": footprint_report(&state, ledger.sequence, false),
+        }));
+    }
+
+    let outcome = run_replay(host, &tx, &state, &ledger, progress)?;
+    Ok(json!({
+        "stage": "replay", "hash": tx.hash, "ledger": ledger.sequence, "protocol": ledger.protocol,
+        "result": crate::report::ResultSummary::from(&outcome.result),
+        "resultXdr": b64_encode(&crate::codec::encode(&outcome.result, "the local result")?),
+        "errorXdr": outcome.error.as_ref()
+            .map(|error| crate::codec::encode(error, "the local error")).transpose()?.as_deref().map(b64_encode),
+        "diagnostics": lines(&outcome.diagnostics), "diagnosticsXdr": raw(&outcome.diagnostics),
+        "budget": outcome.budget, "prngSeed": outcome.prng_seed,
+        "nonRefundableFee": outcome.non_refundable_fee,
+    }))
+}
+
+/// Measure one stage of a replay for the repository's offline benchmarks.
+#[doc(hidden)]
+pub async fn benchmark_stage(
+    rpc: &RpcClient,
+    request: &Request,
+    stage: InspectStage,
+) -> Result<std::time::Duration> {
+    use std::time::Instant;
+
+    let fetched = fetch(rpc, request).await?;
+    let start = Instant::now();
+    let tx = tx::decode(&request.hash, &fetched.raw)?;
+    if stage == InspectStage::Decode {
+        return Ok(start.elapsed());
+    }
+    let start = Instant::now();
+    let (ledger, state, host) = reconstruct(rpc, &fetched, &tx, &Silent, true).await?;
+    if stage == InspectStage::State {
+        return Ok(start.elapsed());
+    }
+    let start = Instant::now();
+    std::hint::black_box(run_replay(host, &tx, &state, &ledger, &Silent)?);
+    Ok(start.elapsed())
 }
 
 /// A failed transaction and the network it was found on.
@@ -115,7 +305,7 @@ async fn fetch(rpc: &RpcClient, request: &Request) -> Result<Fetched> {
         TxStatus::Success => Err(RewindError::NotAFailure {
             hash: request.hash.clone(),
         }),
-        TxStatus::NotFound => Err(RewindError::NotFound {
+        TxStatus::NotFound => Err(rpc.history_error(RewindError::NotFound {
             hash: request.hash.clone(),
             network,
             // Only used to word the error, so a failed probe is not an error.
@@ -128,7 +318,7 @@ async fn fetch(rpc: &RpcClient, request: &Request) -> Result<Fetched> {
                 Ok((Some(window), oldest)) => Retention::Reported { window, oldest },
                 _ => Retention::Unknown,
             },
-        }),
+        })),
         TxStatus::Unknown => Err(RewindError::Rpc {
             origin: rpc.origin(),
             method: "getTransaction".to_string(),

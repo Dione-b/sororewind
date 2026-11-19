@@ -261,16 +261,42 @@ pub async fn contract_wasm(
         return Ok(ContractCode::StellarAsset);
     };
 
-    let code_key = LedgerKey::ContractCode(LedgerKeyContractCode { hash });
+    let code_key = LedgerKey::ContractCode(LedgerKeyContractCode { hash: hash.clone() });
+    let code_key_xdr = codec::encode(&code_key, "a contract code key")?;
+    // A reconstructed slot carries evidence about whether code was present.
+    // A disk hit is only useful when the code was outside that footprint.
+    let cache = match rpc.cache_dir() {
+        Some(root) if state.slot(&code_key_xdr).is_none() => rpc
+            .network()
+            .await
+            .ok()
+            .map(|network| (root, network.passphrase)),
+        _ => None,
+    };
+    if let Some((root, passphrase)) = &cache
+        && let Some(wasm) = crate::cache::load_wasm(root, passphrase, &hash.0).await
+    {
+        return Ok(ContractCode::Wasm(ContractWasm {
+            wasm,
+            changed_since: instance_changed,
+        }));
+    }
+
     let (code, code_changed) = fetch_entry(rpc, state, &code_key).await?;
     let LedgerEntryData::ContractCode(code) = code.data else {
         return Err(RewindError::ContractCode {
             reason: "the contract's code entry does not hold contract code",
         });
     };
+    let wasm = code.code.to_vec();
+    let verified = crate::cache::wasm_matches(&hash.0, &wasm);
+    if verified && let Some((root, passphrase)) = cache {
+        crate::cache::save_wasm(root, &passphrase, &hash.0, &wasm).await;
+    }
+    // Republishing byte-identical code cannot change the error names.
     Ok(ContractCode::Wasm(ContractWasm {
-        wasm: code.code.to_vec(),
-        changed_since: instance_changed || code_changed,
+        wasm,
+        changed_since: instance_changed || (!verified && code_changed),
     }))
 }
 

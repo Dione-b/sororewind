@@ -52,3 +52,7 @@ find *args:
 # Record (or refresh) fixture <name> from transaction <hash>.
 record name hash *args:
     cargo run --locked --example record_fixture -- {{name}} {{hash}} {{args}}
+
+# Measure replay stages and count RPC calls using only recorded fixtures.
+bench *args:
+    cargo bench --locked --offline --bench replay -- {{args}}

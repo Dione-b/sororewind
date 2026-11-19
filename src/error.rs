@@ -84,6 +84,16 @@ pub enum RewindError {
         source: Option<reqwest::Error>,
     },
 
+    /// An RPC request failed after trying multiple configured endpoints.
+    #[error("{source} (RPC endpoints tried: {endpoints})")]
+    RpcAttempts {
+        /// Redacted endpoint origins, in request order.
+        endpoints: String,
+        /// The RPC failure that ended the request.
+        #[source]
+        source: Box<RewindError>,
+    },
+
     /// The `reqwest` client could not be built (for example, no TLS backend).
     #[error("could not set up the HTTP client: {0}")]
     HttpClient(#[source] reqwest::Error),
@@ -358,10 +368,11 @@ impl RewindError {
     /// B for this rpc instance", code -32600 (checked against testnet and
     /// mainnet, 2026-11-11).
     pub fn is_ledger_out_of_range(&self) -> bool {
-        matches!(
-            self,
-            RewindError::Rpc { detail, .. } if detail.contains("must be between the oldest ledger")
-        )
+        match self {
+            RewindError::Rpc { detail, .. } => detail.contains("must be between the oldest ledger"),
+            RewindError::RpcAttempts { source, .. } => source.is_ledger_out_of_range(),
+            _ => false,
+        }
     }
 
     /// A stable machine name for the kind of failure, for the `--json` error
@@ -377,6 +388,7 @@ impl RewindError {
             RewindError::NotFound { .. } => "not_found",
             RewindError::RpcUnreachable { .. } => "rpc_unreachable",
             RewindError::HttpClient(_) => "http_client",
+            RewindError::RpcAttempts { source, .. } => source.kind(),
             RewindError::Rpc { .. } => "rpc_error",
             RewindError::NetworkMismatch { .. } => "network_mismatch",
             RewindError::NotSoroban { .. } => "not_soroban",
@@ -415,6 +427,7 @@ impl RewindError {
             | RewindError::InvalidOption { .. }
             | RewindError::FixtureHashMismatch { .. }
             | RewindError::WasmFile { .. } => Stage::Input,
+            RewindError::RpcAttempts { source, .. } => source.stage(),
             RewindError::NotFound { .. }
             | RewindError::RpcUnreachable { .. }
             | RewindError::HttpClient(_)
