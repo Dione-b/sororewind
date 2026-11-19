@@ -272,6 +272,25 @@ pub fn replay(
     state: &Reconstructed,
     ledger: &LedgerContext,
 ) -> Result<ReplayOutcome> {
+    replay_with_protocol(host, tx, state, ledger, state.ledger_info.protocol_version)
+}
+
+pub(crate) fn replay_on_other_host(
+    host: &host::Host,
+    tx: &DecodedTx,
+    state: &Reconstructed,
+    ledger: &LedgerContext,
+) -> Result<ReplayOutcome> {
+    replay_with_protocol(host, tx, state, ledger, host.protocol)
+}
+
+fn replay_with_protocol(
+    host: &host::Host,
+    tx: &DecodedTx,
+    state: &Reconstructed,
+    ledger: &LedgerContext,
+    protocol: u32,
+) -> Result<ReplayOutcome> {
     let (seed, prng_seed) = prng_seed(&ledger.tx_set_hash, tx.application_order);
     let mut budget_use = BudgetUse {
         cpu_insns: 0,
@@ -307,7 +326,10 @@ pub fn replay(
         source_account: tx.encoded_source_account()?,
         auth: tx.encoded_auth()?,
         restored_rw_indices: &restored_rw_indices,
-        ledger: state.ledger_info.clone(),
+        ledger: host::LedgerInfo {
+            protocol_version: protocol,
+            ..state.ledger_info.clone()
+        },
         entries: state.encoded_entries(),
         prng_seed: seed,
         cpu_limit: budget_use.cpu_limit,

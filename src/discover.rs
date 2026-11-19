@@ -70,7 +70,7 @@ pub async fn recent_failures(rpc: &RpcClient, search: Search) -> Result<Vec<Cand
     let mut window = WINDOW;
     while upper > floor && found.len() < search.limit {
         let lower = upper.saturating_sub(window).max(floor);
-        let mut failures = match failures_between(rpc, lower, upper).await {
+        let mut failures = match failures_matching(rpc, lower, upper - 1, |_| true).await {
             Ok(failures) => failures,
             // The RPC pruned its oldest ledgers while we were scanning: what
             // was found so far is still good.
@@ -89,19 +89,24 @@ pub async fn recent_failures(rpc: &RpcClient, search: Search) -> Result<Vec<Cand
     Ok(found)
 }
 
-/// Failed Soroban invocations in ledgers `[from, to)`, oldest first.
-async fn failures_between(rpc: &RpcClient, from: u32, to: u32) -> Result<Vec<Candidate>> {
+/// Failed Soroban invocations in an inclusive ledger range, oldest first.
+pub(crate) async fn failures_matching(
+    rpc: &RpcClient,
+    from: u32,
+    through: u32,
+    matches: impl Fn(&tx::DecodedTx) -> bool,
+) -> Result<Vec<Candidate>> {
     let mut found = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
         let page = rpc.get_transactions(from, cursor.as_deref()).await?;
         let mut past_the_end = page.transactions.is_empty();
         for raw in &page.transactions {
-            if raw.ledger.is_some_and(|ledger| ledger >= to) {
+            if raw.ledger.is_some_and(|ledger| ledger > through) {
                 past_the_end = true;
                 break;
             }
-            if raw.status != TxStatus::Failed {
+            if raw.status != TxStatus::Failed || raw.ledger.is_some_and(|ledger| ledger < from) {
                 continue;
             }
             let Some(hash) = raw
@@ -112,7 +117,9 @@ async fn failures_between(rpc: &RpcClient, from: u32, to: u32) -> Result<Vec<Can
                 continue;
             };
             // Anything that is not a host invocation fails to decode; skip it.
-            if let Ok(tx) = tx::decode(&hash, raw) {
+            if let Ok(tx) = tx::decode(&hash, raw)
+                && matches(&tx)
+            {
                 found.push(Candidate {
                     category: category(&tx),
                     hash,
@@ -121,10 +128,18 @@ async fn failures_between(rpc: &RpcClient, from: u32, to: u32) -> Result<Vec<Can
                 });
             }
         }
-        cursor = page.cursor;
-        if past_the_end || cursor.is_none() {
+        if past_the_end || page.cursor.is_none() {
             return Ok(found);
         }
+        if page.cursor == cursor {
+            return Err(RewindError::Rpc {
+                origin: rpc.origin(),
+                method: "getTransactions".into(),
+                code: None,
+                detail: "the RPC repeated a pagination cursor".into(),
+            });
+        }
+        cursor = page.cursor;
     }
 }
 

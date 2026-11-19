@@ -15,6 +15,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod cache;
+mod catalog;
 #[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
@@ -67,12 +68,15 @@ pub mod trust;
 #[doc(hidden)]
 pub mod tx;
 
+#[doc(hidden)]
+pub mod watch;
+
 #[cfg(test)]
 mod test_support;
 
 pub use culprit::{Culprit, CulpritKind};
 pub use error::{Result, Retention, RewindError, Stage};
-pub use findings::{Finding, Severity};
+pub use findings::{Finding, Guidance, Severity};
 pub use hash::TxHash;
 pub use network::{Network, NetworkId};
 pub use pipeline::{Request, run, run_with_progress};
@@ -80,7 +84,8 @@ pub use progress::{Progress, Silent, Step};
 pub use replay::{BudgetUse, Divergence, Fidelity, PrngSeed};
 pub use report::{
     Diagnostics, EntryReason, EntryStatus, EntryStatusKind, FeeReport, FootprintReport, Outcome,
-    Report, ResultPair, ResultSummary, SCHEMA_VERSION, TtlDriftEntry, TtlDriftReason,
+    Report, ResultPair, ResultSummary, SCHEMA_VERSION, TtlDriftEntry, TtlDriftReason, WhatIf,
+    WhatIfOutcome,
 };
 pub use rpc::RpcClient;
 pub use story::{Call, Cause, Failure, Story};

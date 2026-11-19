@@ -147,3 +147,19 @@ Keep a pull request to one change, and say in the description how you checked
 it. User-visible changes get a line in `CHANGELOG.md` under `Unreleased`.
 Bug reports are most useful with the transaction hash, the network, and the
 `-vv` output.
+
+## Failure catalog
+
+Add an entry to `src/catalog.rs` when a recorded result code or a structured
+host error supports a reusable explanation. Put specific patterns before
+the broad patterns that could also match. Use a contract-declared error
+name or a diagnostic phrase as a qualifier when the error code alone is
+ambiguous. Use recorded result patterns for claims about a divergent run.
+
+Give the entry a stable ID and write checks the developer can perform. A
+fixture that demonstrates the error does not validate the suggested fix.
+Use the unverified constructor for suggestions. Before adding a verified
+claim, add a fixture or test that runs the proposed check for the relevant
+case and cite it in the catalog entry. Update the fixture expectations in
+`tests/narrative.rs` and its documented output in `docs/examples.md` when
+changing a visible explanation.

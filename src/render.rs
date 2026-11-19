@@ -239,7 +239,58 @@ fn write_human(out: &mut impl Write, report: &Report, p: &Palette, detail: Detai
     if detail >= Detail::Diagnostics {
         diagnostics(out, report, p)?;
     }
+    if let Some(what_if) = &report.what_if {
+        writeln!(
+            out,
+            "\n{}",
+            p.bold(&format!(
+                "what-if protocol {} (non-faithful)",
+                what_if.protocol
+            ))
+        )?;
+        for line in what_if_lines(report, what_if) {
+            writeln!(out, "  {}", safe(&line))?;
+        }
+    }
     Ok(())
+}
+
+pub(crate) fn what_if_lines(report: &Report, what_if: &crate::WhatIf) -> Vec<String> {
+    use crate::WhatIfOutcome;
+
+    match &what_if.outcome {
+        WhatIfOutcome::Unavailable { reason } => vec![format!("unavailable: {reason}")],
+        WhatIfOutcome::Compared {
+            result,
+            error,
+            result_changed,
+            budget,
+            first_event_difference,
+            ..
+        } => vec![
+            format!(
+                "result  {} → {}{}{}",
+                report.result.local.label(),
+                result.label(),
+                error
+                    .as_ref()
+                    .map_or_else(String::new, |error| format!(" ({error})")),
+                if *result_changed { " · changed" } else { "" }
+            ),
+            format!(
+                "CPU     {} → {} instructions",
+                report.budget.cpu_insns, budget.cpu_insns
+            ),
+            format!(
+                "memory  {} → {} bytes",
+                report.budget.mem_bytes, budget.mem_bytes
+            ),
+            first_event_difference.map_or_else(
+                || "diagnostics unchanged".into(),
+                |index| format!("diagnostics first differ at event {}", index + 1),
+            ),
+        ],
+    }
 }
 
 fn header(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
@@ -281,6 +332,12 @@ fn findings(out: &mut impl Write, report: &Report, p: &Palette, detail: Detail) 
             paint(p, &format!("{label:<10}")),
             safe(&finding.summary)
         )?;
+        if let Some(guidance) = &finding.guidance {
+            writeln!(out, "             {}", guidance.explanation)?;
+            for check in guidance.checks {
+                writeln!(out, "             check (not verified): {check}")?;
+            }
+        }
         if detail >= Detail::Budget {
             writeln!(
                 out,

@@ -8,6 +8,8 @@ ledger 5672305 · protocol 30 · 2026-11-11 08:19:28 UTC
 
 findings
   error      the transaction failed: storage error ExceededLimit in withdraw_position
+             The contract accessed a ledger key outside the declared transaction footprint.
+             check (not verified): Check the key in the diagnostic against the simulated read-only and read-write footprint.
 
 ✓ replay matches network
   on-chain  trapped

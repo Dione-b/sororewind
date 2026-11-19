@@ -8,6 +8,8 @@ ledger 5678938 · protocol 30 · 2026-11-11 17:32:13 UTC
 
 findings
   error      the transaction failed: contract error #17 in execute
+             The contract returned an application-defined error.
+             check (not verified): Check the named error in the contract spec and the innermost failing call's inputs.
 
 ✓ replay matches network
   on-chain  trapped

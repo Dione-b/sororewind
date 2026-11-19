@@ -13,7 +13,7 @@ ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
 
 ## Findings
 
-- **error** the transaction failed: contract error \#10 in transfer (evidence: `failure`)
+- **error** the transaction failed: contract error \#10 in transfer (evidence: `failure`) The transfer would put an account balance outside the token's permitted range. Check (not verified): Compare the attempted amount with the available balance and any account limits.
 
 ## Where it broke
 

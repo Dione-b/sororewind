@@ -375,6 +375,22 @@ impl RewindError {
         }
     }
 
+    /// A transport failure that can recover on a new request.
+    #[doc(hidden)]
+    pub fn is_transient_rpc(&self) -> bool {
+        match self {
+            Self::RpcUnreachable { .. } => true,
+            Self::RpcAttempts { source, .. } => source.is_transient_rpc(),
+            Self::Rpc { code, detail, .. } => {
+                crate::transport::is_rate_limit(code.unwrap_or_default(), detail)
+                    || ["HTTP 502", "HTTP 503", "HTTP 504"]
+                        .iter()
+                        .any(|status| detail.starts_with(status))
+            }
+            _ => false,
+        }
+    }
+
     /// A stable machine name for the kind of failure, for the `--json` error
     /// document. Names are part of the public interface: add, never rename.
     pub fn kind(&self) -> &'static str {

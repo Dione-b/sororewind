@@ -126,6 +126,14 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
       "evidence": [
         "result.onchain"
       ],
+      "guidance": {
+        "checks": [
+          "Check the declared limits against the CPU, memory and ledger-access diagnostics."
+        ],
+        "explanation": "The network recorded a resource limit failure.",
+        "id": "resource-budget",
+        "verified": false
+      },
       "severity": "error",
       "summary": "the transaction failed on-chain: resource limit exceeded"
     },

@@ -26,6 +26,8 @@ ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
 
 findings
   error      the transaction failed: contract error #10 in transfer
+             The transfer would put an account balance outside the token's permitted range.
+             check (not verified): Compare the attempted amount with the available balance and any account limits.
 
 ✓ replay matches network
   on-chain  trapped
@@ -58,6 +60,8 @@ ledger 5678938 · protocol 30 · 2026-11-11 17:32:13 UTC
 
 findings
   error      the transaction failed: contract error #17 in execute
+             The contract returned an application-defined error.
+             check (not verified): Check the named error in the contract spec and the innermost failing call's inputs.
 
 ✓ replay matches network
   on-chain  trapped
@@ -114,6 +118,9 @@ ledger 5670652 · protocol 30 · 2026-11-11 06:01:43 UTC
 
 findings
   error      the transaction failed: auth error InvalidAction in transfer
+             A custom account rejected authorization and the host surfaced its contract error.
+             check (not verified): Inspect the named cause and its __check_auth call.
+             check (not verified): Check the account's authorization rules and the signed invocation tree.
 
 ✓ replay matches network
   on-chain  trapped
@@ -150,6 +157,9 @@ ledger 5549745 · protocol 30 · 2026-11-04 06:06:05 UTC
 
 findings
   error      the transaction failed: auth error InvalidAction in transfer
+             A custom account rejected authorization and the host surfaced its contract error.
+             check (not verified): Inspect the named cause and its __check_auth call.
+             check (not verified): Check the account's authorization rules and the signed invocation tree.
 
 ✓ replay matches network
   on-chain  trapped
@@ -186,6 +196,8 @@ ledger 5670060 · protocol 30 · 2026-11-11 05:12:23 UTC
 
 findings
   error      the transaction failed: budget error ExceededLimit in __check_auth
+             The invocation exceeded a resource limit.
+             check (not verified): Check the budget section and diagnostic message for the resource that ran out.
 
 ✓ replay matches network
   on-chain  resource limit exceeded
@@ -219,6 +231,8 @@ ledger 5672305 · protocol 30 · 2026-11-11 08:19:28 UTC
 
 findings
   error      the transaction failed: storage error ExceededLimit in withdraw_position
+             The contract accessed a ledger key outside the declared transaction footprint.
+             check (not verified): Check the key in the diagnostic against the simulated read-only and read-write footprint.
 
 ✓ replay matches network
   on-chain  trapped
@@ -252,6 +266,8 @@ ledger 5678910 · protocol 30 · 2026-11-11 17:29:53 UTC
 
 findings
   error      the transaction failed: budget error ExceededLimit
+             The refundable fee could not cover the rent or events charged for this invocation.
+             check (not verified): Compare the simulated refundable fee with the transaction budget and storage changes.
   warning    network setting changed after the transaction: LiveSorobanStateSizeWindow
 
 ✓ replay matches network
@@ -288,6 +304,8 @@ ledger 5679032 · protocol 30 · 2026-11-11 17:40:03 UTC
 
 findings
   error      the transaction failed: storage error ExceededLimit in write_prices
+             The contract accessed a ledger key outside the declared transaction footprint.
+             check (not verified): Check the key in the diagnostic against the simulated read-only and read-write footprint.
 
 ✓ replay matches network
   on-chain  trapped
@@ -321,6 +339,8 @@ ledger 65424472 · protocol 29 · 2026-11-11 14:46:42 UTC
 
 findings
   error      the transaction failed: auth error ExistingValue in swap
+             The authorization check encountered an existing value, such as a consumed nonce.
+             check (not verified): Check the diagnostic message and the account's nonce, then compare with fresh simulation.
   warning    changed after the transaction and could not be rebuilt: account GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR, trustline GBOT34TBVIIOXU3YIWU4ZA7H44EIXTUCHMNB6J5QMRKSU3M4R3HCDPLR USDC:G…KZVN
 
 ✓ replay matches network

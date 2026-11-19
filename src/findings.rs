@@ -47,6 +47,37 @@ pub struct Finding {
     /// The report fields it is based on, as paths into the JSON document
     /// (`failure`, `probableCauses[0]`, `trust.caveats[2]`).
     pub evidence: Vec<String>,
+    /// A matching catalog explanation and checks to investigate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<Guidance>,
+}
+
+/// Catalog guidance associated with replay evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Guidance {
+    /// Stable identifier for this catalog entry.
+    pub id: &'static str,
+    /// What the observed failure typically means.
+    pub explanation: &'static str,
+    /// Checks a developer can make for their transaction.
+    pub checks: &'static [&'static str],
+    /// Whether the suggested checks were verified for this transaction.
+    pub verified: bool,
+}
+
+impl Guidance {
+    pub(crate) const fn unverified(
+        id: &'static str,
+        explanation: &'static str,
+        checks: &'static [&'static str],
+    ) -> Self {
+        Self {
+            id,
+            explanation,
+            checks,
+            verified: false,
+        }
+    }
 }
 
 /// What the findings are derived from.
@@ -68,7 +99,14 @@ pub struct Inputs<'a> {
 /// The findings of a run, most severe first; within a severity, in the order
 /// the report lists their evidence.
 pub fn derive(inputs: &Inputs<'_>) -> Vec<Finding> {
-    let mut findings = vec![on_chain_failure(inputs)];
+    let mut first = on_chain_failure(inputs);
+    if let Some((guidance, evidence)) = crate::catalog::lookup(inputs) {
+        first.guidance = Some(guidance);
+        if !first.evidence.iter().any(|path| path == evidence) {
+            first.evidence.push(evidence.into());
+        }
+    }
+    let mut findings = vec![first];
     findings.extend(divergence(inputs));
     findings.extend(caveats(&inputs.trust.caveats));
     // Stable: keeps the evidence order inside a severity.
@@ -93,6 +131,7 @@ fn on_chain_failure(inputs: &Inputs<'_>) -> Finding {
             Finding {
                 severity: Severity::Error,
                 summary: format!("the transaction failed: {}{place}", failure.description),
+                guidance: None,
                 evidence,
             }
         }
@@ -102,6 +141,7 @@ fn on_chain_failure(inputs: &Inputs<'_>) -> Finding {
                 "the transaction failed on-chain: {}",
                 inputs.result.onchain.label()
             ),
+            guidance: None,
             evidence: vec!["result.onchain".to_string()],
         },
     }
@@ -147,6 +187,7 @@ fn divergence(inputs: &Inputs<'_>) -> Option<Finding> {
     Some(Finding {
         severity: Severity::Divergence,
         summary,
+        guidance: None,
         evidence,
     })
 }
@@ -170,6 +211,7 @@ fn caveats(all: &[Caveat]) -> Vec<Finding> {
             Finding {
                 severity: severity_of(kind),
                 summary: caveat_summary(kind, &members),
+                guidance: None,
                 evidence: members
                     .iter()
                     .map(|(i, _)| format!("trust.caveats[{i}]"))

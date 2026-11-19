@@ -8,6 +8,8 @@ ledger 5670060 · protocol 30 · 2026-11-11 05:12:23 UTC
 
 findings
   error      the transaction failed: budget error ExceededLimit in __check_auth
+             The invocation exceeded a resource limit.
+             check (not verified): Check the budget section and diagnostic message for the resource that ran out.
 
 ✓ replay matches network
   on-chain  resource limit exceeded

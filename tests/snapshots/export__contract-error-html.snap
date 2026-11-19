@@ -33,7 +33,7 @@ summary { cursor: pointer; font-weight: 600; }
 </ul>
 <h2>Findings</h2>
 <ul>
-<li><strong>error</strong> the transaction failed: contract error #10 in transfer (evidence: <code>failure</code>)</li>
+<li><strong>error</strong> the transaction failed: contract error #10 in transfer (evidence: <code>failure</code>) The transfer would put an account balance outside the token&#39;s permitted range. Check (not verified): Compare the attempted amount with the available balance and any account limits.</li>
 </ul>
 <h2>Where it broke</h2>
 <ul>

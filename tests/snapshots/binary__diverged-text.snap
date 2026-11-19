@@ -8,6 +8,8 @@ ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
 
 findings
   error      the transaction failed on-chain: resource limit exceeded
+             The network recorded a resource limit failure.
+             check (not verified): Check the declared limits against the CPU, memory and ledger-access diagnostics.
   divergence the replay ended in trapped where the network recorded resource limit exceeded; nothing in this run explains it
 
 ⚠ replay diverged from the network (resource limit exceeded vs trapped)
