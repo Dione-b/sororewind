@@ -9,10 +9,12 @@ use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::error::ErrorKind;
-use sororewind::cli::Cli;
+use sororewind::cli::{Cli, Command};
 use sororewind::progress::{Progress, Silent, Step};
 use sororewind::render::{self, Detail};
 use sororewind::{Report, Result};
+
+mod diff;
 
 /// Diagnostics go to stderr, tagged with where they came from: `[rpc] → …`.
 /// This is the only place in the program that writes to stderr.
@@ -20,7 +22,7 @@ struct StderrLogger;
 
 /// The tags sororewind logs under. Dependencies log too; they are not ours to
 /// print.
-const TARGETS: [&str; 5] = ["rpc", "fixture", "record", "spec", "replay"];
+const TARGETS: [&str; 6] = ["rpc", "fixture", "record", "spec", "replay", "config"];
 
 impl log::Log for StderrLogger {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
@@ -86,7 +88,7 @@ async fn run(cli: &Cli) -> Result<Report> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = match Cli::try_parse_args(std::env::args_os()) {
+    let mut cli = match Cli::try_parse_args(std::env::args_os()) {
         Ok(cli) => cli,
         Err(err) => {
             // `--help` and `--version` are not failures. Everything else is a
@@ -99,6 +101,15 @@ async fn main() -> ExitCode {
             };
         }
     };
+    if let Some(Command::Diff { before, after }) = &cli.command {
+        return match diff::compare(before, after) {
+            Ok((output, different)) => match finish(write_stdout(&output)) {
+                ExitCode::SUCCESS if different => ExitCode::from(sororewind::EXIT_DIVERGED),
+                code => code,
+            },
+            Err(error) => finish(Err(error)),
+        };
+    }
     // `--completions` and `--man` stand alone (clap rejects anything next
     // to them), so there is nothing to replay.
     if let Some(shell) = cli.completions {
@@ -109,7 +120,19 @@ async fn main() -> ExitCode {
     }
     init_logging(cli.verbose);
 
-    let result = run(&cli).await;
+    let config = cli.load_config();
+    if let Some(stage) = cli.stage {
+        let format = cli.output_format();
+        let printed = match config {
+            Ok(()) => inspect(&cli, stage).await,
+            Err(error) => Err(error),
+        };
+        return print_result(printed, format, sororewind::EXIT_OK);
+    }
+    let result = match config {
+        Ok(()) => run(&cli).await,
+        Err(error) => Err(error),
+    };
     let code = sororewind::exit_code(&result);
     let format = cli.output_format();
     let printed = result.and_then(|report| {
@@ -120,6 +143,53 @@ async fn main() -> ExitCode {
         write_stdout(&text)
     });
 
+    print_result(printed, format, code)
+}
+
+async fn inspect(cli: &Cli, stage: sororewind::pipeline::InspectStage) -> Result<()> {
+    use sororewind::render::Format;
+    use std::fmt::Write as _;
+
+    let format = cli.output_format();
+    if !matches!(format, Format::Text | Format::Json) {
+        return Err(sororewind::RewindError::InvalidOption {
+            name: "format",
+            reason: "--stage supports text and json".into(),
+        });
+    }
+    let connection = cli.connect().await?;
+    let progress: &dyn Progress = if cli.show_progress(std::io::stderr().is_terminal()) {
+        &StderrProgress
+    } else {
+        &Silent
+    };
+    let output =
+        sororewind::pipeline::inspect(&connection.rpc, &connection.request, progress, stage)
+            .await?;
+    let mut text = String::new();
+    match format {
+        Format::Json => {
+            text = serde_json::to_string_pretty(&output)
+                .map_err(|error| sororewind::RewindError::Output(error.to_string()))?;
+            text.push('\n');
+        }
+        _ => {
+            let stage = output["stage"].as_str().unwrap_or("inspection");
+            let hash = output["hash"].as_str().unwrap_or_default();
+            let _ = writeln!(text, "{stage} · {hash}");
+            if let Some(fields) = output.as_object() {
+                for (name, value) in fields {
+                    if !matches!(name.as_str(), "stage" | "hash") {
+                        let _ = writeln!(text, "{name}  {value}");
+                    }
+                }
+            }
+        }
+    }
+    write_stdout(&text)
+}
+
+fn print_result(printed: Result<()>, format: render::Format, code: u8) -> ExitCode {
     match printed {
         Ok(()) => ExitCode::from(code),
         Err(err) => {

@@ -1,56 +1,91 @@
 //! sororewind — replay a failed Soroban transaction and narrate the failure.
 //!
-//! The library is the whole tool; the binary only parses arguments, prints the
-//! report and maps the outcome onto an exit code. The pipeline, one module per
-//! stage:
+//! Start a replay with [`run`] and a [`Request`]. Use [`HttpTransport`]
+//! for live RPC requests or [`FixtureTransport`] for an offline recording.
+//! [`run_with_progress`] also reports stage transitions. The returned
+//! [`Report`] gives callers the outcome, diagnostics, call tree and evidence
+//! about the state used by the replay.
 //!
-//! ```text
-//! fetch (rpc, transport) → decode (tx) → reconstruct (state, history) → replay (replay)
-//!       → narrate (story, spec) → report (report, render)
-//! ```
-//!
-//! [`pipeline::run`] wires the stages together. It takes an [`rpc::RpcClient`]
-//! over any [`transport::Transport`], so the offline fixtures and the tests
-//! exercise exactly the same path as a live run.
+//! The supported library interface consists of the items re-exported here,
+//! the [`render`] functions and their public types, and the public fields
+//! of the report and its component types. See the changelog for the
+//! compatibility policy.
 
 // Tests assert with `unwrap`/`expect`; production code may not.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod cache;
+#[doc(hidden)]
 pub mod cli;
+#[doc(hidden)]
 pub mod codec;
+mod config;
+#[doc(hidden)]
 pub mod culprit;
+#[doc(hidden)]
 pub mod discover;
+#[doc(hidden)]
 pub mod display;
+#[doc(hidden)]
 pub mod error;
+#[doc(hidden)]
 pub mod export;
+mod fallback;
+#[doc(hidden)]
 pub mod findings;
+#[doc(hidden)]
 pub mod hash;
+#[doc(hidden)]
 pub mod history;
+#[doc(hidden)]
 pub mod host;
+#[doc(hidden)]
 pub mod network;
+#[doc(hidden)]
 pub mod pipeline;
+#[doc(hidden)]
 pub mod progress;
 pub mod render;
+#[doc(hidden)]
 pub mod replay;
+#[doc(hidden)]
 pub mod report;
+#[doc(hidden)]
 pub mod rpc;
+#[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
 pub mod state;
+#[doc(hidden)]
 pub mod story;
+#[doc(hidden)]
 pub mod strkey;
+#[doc(hidden)]
 pub mod transport;
+#[doc(hidden)]
 pub mod trust;
+#[doc(hidden)]
 pub mod tx;
 
 #[cfg(test)]
 mod test_support;
 
-pub use error::{Result, RewindError};
+pub use culprit::{Culprit, CulpritKind};
+pub use error::{Result, Retention, RewindError, Stage};
+pub use findings::{Finding, Severity};
 pub use hash::TxHash;
-pub use network::Network;
+pub use network::{Network, NetworkId};
 pub use pipeline::{Request, run, run_with_progress};
-pub use progress::{Progress, Step};
-pub use report::{Outcome, Report};
+pub use progress::{Progress, Silent, Step};
+pub use replay::{BudgetUse, Divergence, Fidelity, PrngSeed};
+pub use report::{
+    Diagnostics, EntryReason, EntryStatus, EntryStatusKind, FeeReport, FootprintReport, Outcome,
+    Report, ResultPair, ResultSummary, SCHEMA_VERSION, TtlDriftEntry, TtlDriftReason,
+};
+pub use rpc::RpcClient;
+pub use story::{Call, Cause, Failure, Story};
+pub use transport::{BoxFuture, FixtureTransport, HttpTransport, Transport, TransportConfig};
+pub use trust::{Caveat, CaveatKind, Trust};
 
 /// The replay ran and reproduced the network's recorded result.
 pub const EXIT_OK: u8 = 0;

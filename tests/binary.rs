@@ -22,7 +22,14 @@ fn command(args: &[&str]) -> Command {
         // Whatever the developer's shell exports must not leak in.
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
-        .env_remove("SOROREWIND_RPC_URL");
+        .env_remove("SOROREWIND_RPC_URL")
+        .env_remove("SOROREWIND_NETWORK")
+        .env_remove("SOROREWIND_FORMAT")
+        .env_remove("SOROREWIND_COLOR")
+        .env(
+            "XDG_CONFIG_HOME",
+            common::fixture_dir(FIXTURE).join("config"),
+        );
     command
 }
 
@@ -322,4 +329,118 @@ fn an_rpc_url_from_the_environment_is_validated() {
         text.contains("SOROREWIND_RPC_URL") && text.contains("did you mean http://localhost:8000?"),
         "{text}"
     );
+}
+
+#[test]
+fn stage_inspection_keeps_text_and_json_snapshots() {
+    for stage in ["decode", "state", "replay"] {
+        for format in ["text", "json"] {
+            let out = sororewind(&[
+                "--fixture",
+                &fixture(),
+                "--stage",
+                stage,
+                "--format",
+                format,
+            ]);
+            assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+            assert!(out.stderr.is_empty(), "{}", stderr(&out));
+            if format == "json" {
+                let document: Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(document["stage"], stage);
+            }
+            insta::assert_snapshot!(format!("stage-{stage}-{format}"), stdout(&out));
+        }
+    }
+}
+
+#[test]
+fn diff_compares_reports_from_fixtures() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
+    let write_report = |name: &str, path: &Path| {
+        let fixture = common::fixture_dir(name);
+        let out = sororewind(&["--fixture", fixture.to_str().unwrap(), "--json"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        std::fs::write(path, out.stdout).unwrap();
+    };
+    write_report(FIXTURE, &before);
+    write_report("budget-error", &after);
+    let before = before.to_str().unwrap();
+    let after = after.to_str().unwrap();
+
+    let same = sororewind(&["diff", before, before]);
+    assert_eq!(same.status.code(), Some(0), "{}", stderr(&same));
+    assert!(stdout(&same).contains("equivalent"));
+
+    let different = sororewind(&["diff", before, after]);
+    assert_eq!(different.status.code(), Some(2), "{}", stderr(&different));
+    for section in [
+        "Outcome",
+        "Failure",
+        "Call tree",
+        "Events",
+        "Budget",
+        "Footprint",
+    ] {
+        assert!(stdout(&different).contains(section), "{section}");
+    }
+
+    let mut incompatible: Value = serde_json::from_slice(&std::fs::read(after).unwrap()).unwrap();
+    incompatible["schemaVersion"] = 2.into();
+    std::fs::write(after, incompatible.to_string()).unwrap();
+    let wrong_version = sororewind(&["diff", before, after]);
+    assert_eq!(wrong_version.status.code(), Some(1));
+    assert!(stderr(&wrong_version).contains("schemaVersion differs"));
+}
+
+#[test]
+fn config_precedence_reaches_the_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    let user_dir = dir.path().join("user");
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(user_dir.join("sororewind")).unwrap();
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        user_dir.join("sororewind/sororewind.toml"),
+        "format = 'markdown'",
+    )
+    .unwrap();
+    let config = project_dir.join("sororewind.toml");
+    std::fs::write(&config, "format = 'json'").unwrap();
+
+    let run = |format: Option<&str>, flags: &[&str]| {
+        let mut command = command(&["--fixture", &fixture(), "-v"]);
+        command
+            .current_dir(&project_dir)
+            .env("XDG_CONFIG_HOME", &user_dir)
+            .args(flags);
+        if let Some(format) = format {
+            command.env("SOROREWIND_FORMAT", format);
+        }
+        command.output().unwrap()
+    };
+    let project = run(None, &[]);
+    assert_eq!(project.status.code(), Some(0), "{}", stderr(&project));
+    assert!(stdout(&project).starts_with('{'));
+    assert!(stderr(&project).contains("[config] loaded"));
+
+    let env = run(Some("html"), &[]);
+    assert_eq!(env.status.code(), Some(0), "{}", stderr(&env));
+    assert!(stdout(&env).contains("<!DOCTYPE html>") || stdout(&env).contains("<!doctype html>"));
+
+    let flag = run(Some("html"), &["--format", "text"]);
+    assert_eq!(flag.status.code(), Some(0), "{}", stderr(&flag));
+    assert!(stdout(&flag).contains("replay matches network"));
+
+    std::fs::remove_file(&config).unwrap();
+    let user = run(None, &[]);
+    assert_eq!(user.status.code(), Some(0), "{}", stderr(&user));
+    assert!(stdout(&user).starts_with('#'));
+
+    std::fs::write(config, "unknown = 'value'").unwrap();
+    let unknown = run(None, &[]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(stderr(&unknown).contains("unknown key"));
 }

@@ -6,9 +6,31 @@ All notable changes to sororewind are recorded here. The format follows
 codes are part of the public interface: changes to them are listed here, and
 an incompatible change to the JSON bumps its `schemaVersion`.
 
+The supported Rust API consists of the items re-exported at the crate root,
+the public `render` module, and the public report fields and their component
+types. Changes to that interface follow Cargo's SemVer compatibility rules
+for a pre-1.0 crate. Hidden modules are available for repository tooling
+and can change between releases.
+
 ## [Unreleased]
 
 ### Added
+
+- `--stage decode|state|replay` stops at a selected stage and prints its
+  output as text or JSON.
+- `sororewind diff before.json after.json` compares two replay reports with
+  the same schema version.
+- Project and user `sororewind.toml` files supply defaults for network,
+  RPC endpoints, transport settings, output format and colour.
+- The supported Rust API is documented with an offline doctest and an
+  embedding example. `just bench` measures offline replay performance.
+
+- Repeat `--rpc-url` or set a whitespace-separated `SOROREWIND_RPC_URL` to
+  fall back to another RPC on transient failures or missing history.
+
+- Live replays cache final transactions, complete ledger metadata pages and verified
+  hash-addressed contract code on disk, keyed by network passphrase. Use `--cache-dir` to select a
+  directory or `--no-cache` to bypass the cache.
 
 - `--format text|json|markdown|html`. `markdown` is for a GitHub issue or PR,
   with the call tree and the detail in collapsible sections; `html` is one

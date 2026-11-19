@@ -187,6 +187,33 @@ When the run fails (exit `1`) the same format is used for the error:
 Markdown and HTML get a short document with the stage, the kind and the
 message, `json` its error document, and `text` only the message on stderr.
 
+## Inspecting a replay stage
+
+Use `--stage decode` to see the transaction and its declared footprint,
+`--stage state` for the reconstructed entries and their provenance, or
+`--stage replay` for the raw local result, events and resource use. The
+command stops at the selected stage. Each stage supports text and JSON.
+
+```bash
+sororewind --fixture fixtures/contract-error --stage state --json
+```
+
+A completed inspection exits `0`, including a replay whose raw result is a
+contract failure. An inspection error exits `1`. The full replay verdict and
+its divergence exit code apply only when running the full pipeline.
+
+## Comparing saved reports
+
+```bash
+sororewind diff before.json after.json
+```
+
+Both files must be replay reports with the same `schemaVersion`. The
+comparison shows changes in transaction identity, outcome, failure, call
+tree, events, budget and footprint. The RPC source label is ignored so the
+same replay can be compared across providers. The exit status is `0` for
+equivalent reports, `2` for differences, or `1` for an input or output error.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -205,11 +232,14 @@ nothing else.
 | Option | Description |
 |--------|-------------|
 | `-n, --network <NETWORK>` | `testnet` (default), `mainnet`, `futurenet`, or `local` (a quickstart or standalone node). Picks the default RPC. |
-| `--rpc-url <URL>` | Use this RPC instead. Must be `http://` or `https://`; `SOROREWIND_RPC_URL` sets it from the environment. |
+| `--rpc-url <URL>` | Use an `http://` or `https://` RPC. Repeat the option for ordered fallback, or set `SOROREWIND_RPC_URL` to a whitespace-separated list. |
+| `--cache-dir <DIR>` | Put the live RPC cache in this directory. By default it uses `$XDG_CACHE_HOME/sororewind`, `%LOCALAPPDATA%/sororewind` on Windows, or `~/.cache/sororewind`. |
+| `--no-cache` | Fetch all RPC responses from the endpoint for this run. |
 | `--timeout <SECONDS>` | How long one RPC request may take before it is abandoned and retried (1 to 3600, default 30). `SOROREWIND_TIMEOUT` sets it from the environment. |
 | `--retries <N>` | How many times a failed RPC call is retried (0 to 10, default 3; `0` never retries). `SOROREWIND_RETRIES` sets it. |
 | `--deadline <SECONDS>` | How long the whole run may spend on the RPC, retries and waits included (1 to 86400; default none). A call still going then fails with `rpc_unreachable`. `SOROREWIND_DEADLINE` sets it. |
 | `--format <text\|json\|markdown\|html>` | How the report is written: the terminal narrative (`text`, default), the JSON document, Markdown for a GitHub issue or PR, or one self-contained HTML file. See [Sharing a report](#sharing-a-report). |
+| `--stage <decode\|state\|replay>` | Stop after the selected stage and print its output in text or JSON. |
 | `--json` | Same as `--format json`. |
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
 | `--color <auto\|always\|never>` | `auto` (default) colours a terminal and honours a non-empty `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb`. Use `always` in a pager: `sororewind … --color always \| less -R`. |
@@ -222,6 +252,16 @@ nothing else.
 | `-h, --help` | Show usage, options and examples. |
 | `-V, --version` | Version, supported protocols, and the commit and target it was built from. Paste it into bug reports. |
 
+The live cache reuses final transactions and complete pages of closed ledger
+metadata and verified, hash-addressed contract code from the same network.
+Current ledger entries are fetched
+on every run. Fixture playback and fixture recording bypass the disk cache.
+
+With multiple RPC endpoints, requests fall back in order on an unreachable
+endpoint, a rate limit after retries, or missing transaction or ledger history.
+Every endpoint must report the same network passphrase. `-v` shows which
+endpoint served a request, with URLs redacted to their scheme and host.
+
 Default RPCs: `https://soroban-testnet.stellar.org` (testnet),
 `https://mainnet.sorobanrpc.com` (mainnet, third-party),
 `https://rpc-futurenet.stellar.org` (futurenet) and
@@ -230,6 +270,30 @@ Default RPCs: `https://soroban-testnet.stellar.org` (testnet),
 Pass `--network` explicitly and sororewind checks it against the passphrase
 the RPC reports. If they disagree, it stops rather than print a report with
 the wrong label on it.
+
+## Configuration
+
+Set project defaults in `sororewind.toml` in the working directory. User
+defaults come from `$XDG_CONFIG_HOME/sororewind/sororewind.toml`, falling
+back to `~/.config/sororewind/sororewind.toml` or the corresponding
+`%APPDATA%` directory on Windows.
+
+Settings are resolved per key. Command-line flags take precedence over
+environment variables, followed by the project file and then the user file.
+For network, format and colour, use `SOROREWIND_NETWORK`,
+`SOROREWIND_FORMAT` and `SOROREWIND_COLOR`. The RPC and transport variables
+are in [Options](#options). Unknown keys produce an error. Use `-v` to see
+the paths of the files that were loaded.
+
+```toml
+network = "testnet"
+rpc-urls = ["https://soroban-testnet.stellar.org", "https://archive.example/rpc"]
+timeout = 20
+retries = 2
+deadline = 60
+format = "text"
+color = "auto"
+```
 
 ## JSON output
 
@@ -416,6 +480,19 @@ CI also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 the tests on Linux, macOS and Windows, a snapshot check that rejects pending
 or unreferenced snapshots, `cargo doc` with warnings as errors, a `cargo
 check` on the minimum supported Rust (1.89), and `cargo deny check`.
+
+### Embedding and benchmarking
+
+Run the offline Rust embedding example with
+`cargo run --example embed -- fixtures/contract-error`. The
+[API documentation](https://docs.rs/sororewind) covers the supported
+library interface.
+
+Once Cargo has downloaded the locked dependencies, `just bench` measures
+decode, reconstruction and replay using the recorded fixtures and prints
+the number of RPC calls for each full replay. In CI, Criterion compares the
+pull request against the base revision on the same runner and reports
+regressions above its 15% noise threshold without blocking the PR.
 
 ### How the code is organised
 

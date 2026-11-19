@@ -1,0 +1,80 @@
+---
+source: tests/binary.rs
+expression: stdout(&out)
+---
+{
+  "baseReserve": 5000000,
+  "closeTime": 1794385548,
+  "entries": [
+    {
+      "archived": false,
+      "entryXdr": "AEZWfgAAAAYAAAAAAAAAAdeSi3LCcDzP6vfrn/TvTVBKVai5efybRQ6iyEK00c5hAAAAFAAAAAEAAAATAAAAAQAAAAEAAAACAAAADwAAAAhNRVRBREFUQQAAABEAAAABAAAAAwAAAA8AAAAHZGVjaW1hbAAAAAADAAAABwAAAA8AAAAEbmFtZQAAAA4AAAAGbmF0aXZlAAAAAAAPAAAABnN5bWJvbAAAAAAADgAAAAZuYXRpdmUAAAAAABAAAAABAAAAAQAAAA8AAAAJQXNzZXRJbmZvAAAAAAAAEAAAAAEAAAABAAAADwAAAAZOYXRpdmUAAAAAAAA=",
+      "key": "contract data C…CYSC <contract instance key> (persistent)",
+      "keyXdr": "AAAABgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQAAABQAAAAB",
+      "lastModifiedLedger": 4609662,
+      "liveUntilLedger": 8468435,
+      "missing": false,
+      "provenance": "current"
+    },
+    {
+      "archived": false,
+      "entryXdr": "AFaNugAAAAAAAAAAcn/g4IYibbIFUXI3GQohMGz5aWiIfDgfV8I1pMuCPR0AAAAXSHboAABWjboAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAA=",
+      "key": "account GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG",
+      "keyXdr": "AAAAAAAAAAByf+DghiJtsgVRcjcZCiEwbPlpaIh8OB9XwjWky4I9HQ==",
+      "lastModifiedLedger": 5672378,
+      "liveUntilLedger": null,
+      "missing": false,
+      "provenance": "current"
+    },
+    {
+      "archived": false,
+      "entryXdr": "AFaNvQAAAAAAAAAAdYoBAo0g0BwEBgYPylyRoTIJShU8+Hw33rMb+/UJ/skAAAABKgXxnABWjboAAAABAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAwAAAAAAVo29AAAAAGr0JowAAAAA",
+      "key": "account GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC",
+      "keyXdr": "AAAAAAAAAAB1igECjSDQHAQGBg/KXJGhMglKFTz4fDfesxv79Qn+yQ==",
+      "lastModifiedLedger": 5672381,
+      "liveUntilLedger": null,
+      "missing": false,
+      "provenance": "current"
+    },
+    {
+      "archived": false,
+      "entryXdr": null,
+      "key": "contract data G…SCWC <nonce 1082260681902037437> (temporary)",
+      "keyXdr": "AAAABgAAAAAAAAAAdYoBAo0g0BwEBgYPylyRoTIJShU8+Hw33rMb+/UJ/skAAAAVDwT2Wyskmb0AAAAA",
+      "lastModifiedLedger": null,
+      "liveUntilLedger": null,
+      "missing": true,
+      "provenance": "current"
+    }
+  ],
+  "footprint": {
+    "archived": [],
+    "archivedInferred": [],
+    "configDriftUnknown": [],
+    "configDrifted": [],
+    "driftUnknown": [],
+    "drifted": [],
+    "entries": 4,
+    "entryStatus": [
+      {
+        "detail": "the RPC has no such entry, so the host was handed none",
+        "entry": "contract data G…SCWC <nonce 1082260681902037437> (temporary)",
+        "reason": "absent",
+        "status": "missing"
+      }
+    ],
+    "extMissing": [],
+    "missing": 1,
+    "missingEntries": [
+      "contract data G…SCWC <nonce 1082260681902037437> (temporary)"
+    ],
+    "rebuildNote": null,
+    "rebuilt": [],
+    "ttlDrifted": []
+  },
+  "hash": "dd1f9bb61fc8d599aa7914469f4e013b40648a6dcd1adb6d294467f55efa53db",
+  "ledger": 5672381,
+  "protocol": 30,
+  "readOnly": 1,
+  "stage": "state"
+}

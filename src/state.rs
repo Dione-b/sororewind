@@ -167,7 +167,7 @@ async fn read_header(rpc: &RpcClient, sequence: u32) -> Result<LedgerHeader> {
     let ledger = rpc
         .get_ledger(sequence)
         .await?
-        .ok_or(RewindError::LedgerUnavailable { sequence })?;
+        .ok_or_else(|| rpc.history_error(RewindError::LedgerUnavailable { sequence }))?;
     // The RPC hands back a `LedgerHeaderHistoryEntry` (hash + header), not a
     // bare `LedgerHeader`.
     let history: LedgerHeaderHistoryEntry = codec::decode(&ledger.header_xdr, "headerXdr")?;

@@ -189,6 +189,50 @@ struct RpcErrorBody {
     data: Option<Value>,
 }
 
+pub(crate) fn cache_passphrase(body: &str) -> Option<String> {
+    let response: RpcEnvelope<NetworkInfo> = serde_json::from_str(body).ok()?;
+    let passphrase = response.result?.passphrase;
+    (response.error.is_none() && !passphrase.is_empty()).then_some(passphrase)
+}
+
+pub(crate) fn immutable_response(method: &str, params: &Value, body: &str) -> bool {
+    match method {
+        "getTransaction" => {
+            serde_json::from_str::<RpcEnvelope<RawTransaction>>(body).is_ok_and(|response| {
+                response.error.is_none()
+                    && response.result.is_some_and(|tx| {
+                        matches!(tx.status, TxStatus::Failed | TxStatus::Success)
+                            && tx.ledger.is_some()
+                            && [tx.envelope_xdr, tx.result_xdr, tx.result_meta_xdr]
+                                .iter()
+                                .all(|xdr| xdr.as_ref().is_some_and(|xdr| !xdr.is_empty()))
+                    })
+            })
+        }
+        "getLedgers" => {
+            serde_json::from_str::<RpcEnvelope<GetLedgersResponse>>(body).is_ok_and(|response| {
+                response.error.is_none()
+                    && response.result.is_some_and(|page| {
+                        let start = params["startLedger"].as_u64();
+                        let limit = params["pagination"]["limit"].as_u64();
+                        !page.ledgers.is_empty()
+                            && limit == Some(page.ledgers.len() as u64)
+                            && page.ledgers.iter().enumerate().all(|(index, ledger)| {
+                                Some(u64::from(ledger.sequence))
+                                    == start.and_then(|start| start.checked_add(index as u64))
+                                    && !ledger.header_xdr.is_empty()
+                                    && ledger
+                                        .metadata_xdr
+                                        .as_ref()
+                                        .is_some_and(|xdr| !xdr.is_empty())
+                            })
+                    })
+            })
+        }
+        _ => false,
+    }
+}
+
 /// The typed Soroban RPC client; every call goes through its [`Transport`].
 pub struct RpcClient {
     transport: Box<dyn Transport>,
@@ -205,6 +249,21 @@ impl RpcClient {
     /// Where responses come from: the endpoint URL, or `fixture:<dir>`.
     pub fn origin(&self) -> String {
         self.transport.origin()
+    }
+
+    pub(crate) fn cache_dir(&self) -> Option<&std::path::Path> {
+        self.transport.cache_dir()
+    }
+
+    pub(crate) fn history_error(&self, error: RewindError) -> RewindError {
+        if let Some(endpoints) = self.transport.fallback_origins() {
+            RewindError::RpcAttempts {
+                endpoints,
+                source: Box::new(error),
+            }
+        } else {
+            error
+        }
     }
 
     fn error(&self, method: &str, code: Option<i64>, detail: String) -> RewindError {
