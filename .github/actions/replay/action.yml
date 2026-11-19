@@ -1,0 +1,38 @@
+name: Replay Soroban failures
+description: Replay failed Soroban transactions and publish the reports
+inputs:
+  version:
+    description: Exact sororewind release tag such as v0.2.0
+    required: true
+  hashes:
+    description: Whitespace-separated transaction hashes
+  network:
+    description: Network for live replays
+    default: testnet
+  rpc-url:
+    description: Optional RPC endpoint. Pass private URLs through GitHub secrets.
+  fixture:
+    description: Optional path to an offline fixture in the workspace, instead of hashes
+  artifact-name:
+    description: Name for the uploaded JSON reports
+    default: sororewind-reports
+runs:
+  using: composite
+  steps:
+    - name: Install pinned release and replay
+      id: replay
+      shell: bash
+      env:
+        REPLAY_VERSION: ${{ inputs.version }}
+        REPLAY_HASHES: ${{ inputs.hashes }}
+        REPLAY_NETWORK: ${{ inputs.network }}
+        REPLAY_FIXTURE: ${{ inputs.fixture }}
+        SOROREWIND_RPC_URL: ${{ inputs.rpc-url }}
+      run: bash "$GITHUB_ACTION_PATH/replay.sh"
+    - name: Upload replay reports
+      if: ${{ always() && steps.replay.outputs.reports != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.replay.outputs.reports }}
+        if-no-files-found: error

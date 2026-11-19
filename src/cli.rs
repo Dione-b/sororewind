@@ -88,6 +88,10 @@ pub struct Cli {
     #[arg(long, value_enum, conflicts_with = "record")]
     pub stage: Option<crate::pipeline::InspectStage>,
 
+    /// Also compare with this embedded host using the recovered ledger inputs
+    #[arg(long, value_name = "N", conflicts_with_all = ["stage", "record"])]
+    pub what_if_protocol: Option<u32>,
+
     /// Same as --format json
     #[arg(long)]
     pub json: bool,
@@ -135,7 +139,7 @@ pub struct Cli {
     #[arg(long, exclusive = true)]
     pub man: bool,
 
-    /// Compare saved replay reports.
+    /// Compare saved reports or monitor newly closed ledgers.
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -153,6 +157,41 @@ pub enum Command {
         /// The second JSON report.
         after: PathBuf,
     },
+    /// Replay new failed Soroban transactions involving a contract or account.
+    Watch(WatchArgs),
+}
+
+/// Options for monitoring newly closed ledgers.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("watch-target").required(true).args(["contract", "account"])))]
+pub struct WatchArgs {
+    /// Monitor this C-prefixed contract.
+    #[arg(long, group = "watch-target")]
+    pub contract: Option<String>,
+    /// Monitor this G-prefixed account.
+    #[arg(long, group = "watch-target")]
+    pub account: Option<String>,
+    /// Network to monitor.
+    #[arg(long, short = 'n', value_enum)]
+    pub network: Option<Network>,
+    /// RPC endpoint. Repeat to configure ordered fallback.
+    #[arg(long, value_parser = parse_rpc_url)]
+    pub rpc_url: Vec<String>,
+    /// Seconds between polls.
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub poll_interval: u64,
+    /// Store the last processed ledger at this path.
+    #[arg(long)]
+    pub checkpoint: Option<PathBuf>,
+    /// Write one report file per transaction in this directory.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Report format. JSON on stdout is newline-delimited.
+    #[arg(long, value_enum)]
+    pub format: Option<Format>,
+    /// Log progress details.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub verbose: u8,
 }
 
 /// `0.1.0 (protocols 29 (soroban-env-host 29.0.2), 30 (...); commit
@@ -488,6 +527,36 @@ impl Cli {
             .collect()
     }
 
+    fn live_transport(&self) -> Result<Box<dyn Transport>> {
+        let urls = self.rpc_urls(std::env::var(RPC_URL_ENV).ok())?;
+        let config = self.transport_config()?;
+        let mut transports = urls
+            .into_iter()
+            .map(|url| HttpTransport::with_config(url, config))
+            .collect::<Result<Vec<_>>>()?;
+        let http: Box<dyn Transport> = if transports.len() == 1 {
+            Box::new(transports.remove(0))
+        } else {
+            Box::new(crate::fallback::Fallback::new(
+                transports,
+                self.network.map(|network| network.passphrase().to_owned()),
+            ))
+        };
+        Ok(http)
+    }
+
+    fn wrap_live_transport(&self, http: Box<dyn Transport>) -> RpcClient {
+        match self.cache_dir.clone().or_else(crate::cache::default_dir) {
+            Some(dir) if !self.no_cache => RpcClient::new(crate::cache::Cache::new(http, dir)),
+            _ => RpcClient::new(http),
+        }
+    }
+
+    /// Build a new live client so a configured deadline applies to this poll.
+    pub fn watch_rpc(&self) -> Result<RpcClient> {
+        Ok(self.wrap_live_transport(self.live_transport()?))
+    }
+
     /// Open the source of RPC responses the arguments ask for, and work out
     /// which transaction to replay.
     pub async fn connect(&self) -> Result<Connection> {
@@ -504,32 +573,14 @@ impl Cli {
                 // clap requires a hash whenever there is no fixture; a `Cli`
                 // built by hand without one is the caller's invalid input.
                 let hash = self.tx_hash.clone().ok_or(RewindError::MissingHash)?;
-                let urls = self.rpc_urls(std::env::var(RPC_URL_ENV).ok())?;
-                let config = self.transport_config()?;
-                let mut transports = urls
-                    .into_iter()
-                    .map(|url| HttpTransport::with_config(url, config))
-                    .collect::<Result<Vec<_>>>()?;
-                let http: Box<dyn Transport> = if transports.len() == 1 {
-                    Box::new(transports.remove(0))
-                } else {
-                    Box::new(crate::fallback::Fallback::new(
-                        transports,
-                        self.network.map(|network| network.passphrase().to_owned()),
-                    ))
-                };
+                let http = self.live_transport()?;
                 let rpc = match &self.record {
                     Some(dir) => {
                         let recorder = Recording::create(http, dir, &hash).await?;
                         recording = Some(recorder.handle());
                         RpcClient::new(recorder)
                     }
-                    None => match self.cache_dir.clone().or_else(crate::cache::default_dir) {
-                        Some(dir) if !self.no_cache => {
-                            RpcClient::new(crate::cache::Cache::new(http, dir))
-                        }
-                        _ => RpcClient::new(http),
-                    },
+                    None => self.wrap_live_transport(http),
                 };
                 (rpc, hash)
             }

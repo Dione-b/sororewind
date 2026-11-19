@@ -125,6 +125,14 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
       "evidence": [
         "failure"
       ],
+      "guidance": {
+        "checks": [
+          "Compare the attempted amount with the available balance and any account limits."
+        ],
+        "explanation": "The transfer would put an account balance outside the token's permitted range.",
+        "id": "token-balance",
+        "verified": false
+      },
       "severity": "error",
       "summary": "the transaction failed: contract error #10 in transfer"
     }

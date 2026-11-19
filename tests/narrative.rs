@@ -51,6 +51,20 @@ async fn check(name: &str, expected: Outcome) {
     };
     assert_eq!(json["network"], network, "{name}");
     assert_eq!(json["status"], "failed", "{name}");
+    let guidance = &json["findings"][0]["guidance"];
+    let expected_guidance = match name {
+        "auth-check-auth" | "auth-error" => "custom-account-auth",
+        "budget-error" => "resource-budget",
+        "contract-error" => "token-balance",
+        "mainnet-auth-error" => "authorization-nonce",
+        "nested-contract-error" => "contract-error",
+        "rebuilt-entry" | "storage-error" => "footprint",
+        "refundable-fee" => "refundable-fee",
+        _ => panic!("set the expected catalog coverage for {name}"),
+    };
+    assert_eq!(guidance["id"], expected_guidance, "{name}");
+    assert_eq!(guidance["verified"], false, "{name}");
+
     assert_eq!(
         json["result"]["onchain"]["code"] == json["result"]["local"]["code"],
         json["fidelity"]["divergence"] != "result",

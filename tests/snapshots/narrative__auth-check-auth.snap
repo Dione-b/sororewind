@@ -8,6 +8,9 @@ ledger 5549745 · protocol 30 · 2026-11-04 06:06:05 UTC
 
 findings
   error      the transaction failed: auth error InvalidAction in transfer
+             A custom account rejected authorization and the host surfaced its contract error.
+             check (not verified): Inspect the named cause and its __check_auth call.
+             check (not verified): Check the account's authorization rules and the signed invocation tree.
 
 ✓ replay matches network
   on-chain  trapped

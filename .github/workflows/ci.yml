@@ -26,6 +26,16 @@ jobs:
     if: github.event_name != 'schedule'
     uses: ./.github/workflows/checks.yml
 
+  replay-action:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/replay
+        with:
+          version: v0.2.0
+          fixture: fixtures/contract-error
+
   # Compare on the same runner to keep hardware variation out of the baseline.
   benchmarks:
     if: github.event_name == 'pull_request'

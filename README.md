@@ -15,6 +15,8 @@ ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
 
 findings
   error      the transaction failed: contract error #10 in transfer
+             The transfer would put an account balance outside the token's permitted range.
+             check (not verified): Compare the attempted amount with the available balance and any account limits.
 
 ✓ replay matches network
   on-chain  trapped
@@ -187,6 +189,77 @@ When the run fails (exit `1`) the same format is used for the error:
 Markdown and HTML get a short document with the stage, the kind and the
 message, `json` its error document, and `text` only the message on stderr.
 
+## Replay failures in GitHub Actions
+
+Use the composite Action on a Linux x64 or arm64 runner. Pin the Action ref
+to a release or commit containing the Action and set `version` to the exact
+release tag of the CLI. The job uploads one JSON report per replay and
+writes a verdict table to the job summary. A divergence or CLI error fails
+the step after all supplied hashes have been processed.
+
+```yaml
+name: Diagnose a Soroban failure
+on:
+  workflow_dispatch:
+    inputs:
+      transaction_hash:
+        description: Failed transaction hash
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Dione-b/sororewind/.github/actions/replay@master
+        with:
+          version: v0.2.0
+          network: testnet
+          hashes: ${{ inputs.transaction_hash }}
+```
+
+Pass a private RPC endpoint through the `rpc-url` input using a repository
+secret. For offline CI, check out a recording and pass its workspace-relative
+path with `fixture` in place of `hashes`.
+
+## Watching new failures
+
+```bash
+sororewind watch --contract <C_ADDRESS> --network mainnet --output-dir reports
+sororewind watch --account <G_ADDRESS> --format json --poll-interval 15
+```
+
+The watcher starts at the current tip and polls newly closed ledgers.
+Matches come from the invocation, authorization entries, footprint, source
+account and available contract diagnostics. It uses the configured RPC
+retries and waits 10 seconds by default between polls. JSON reports on
+stdout use one line per transaction. With `--output-dir`, reports are
+written under their transaction hashes.
+
+The last fully processed ledger is saved by network and target under
+`$XDG_STATE_HOME/sororewind/watch`, `~/.local/state/sororewind/watch`, or
+the corresponding `%LOCALAPPDATA%` directory on Windows. Use
+`--checkpoint <PATH>` to select another file. Ctrl-C stops the watcher.
+An interrupted batch resumes from the saved checkpoint and can repeat
+reports for transactions already emitted. If an RPC has pruned unprocessed
+ledgers, the watcher reports the gap and continues from its oldest ledger.
+
+## Comparing embedded protocols
+
+```bash
+sororewind --fixture fixtures/mainnet-auth-error --what-if-protocol 30
+```
+
+The primary replay runs on the transaction's own protocol. The optional
+what-if comparison runs the other embedded host using the same reconstructed
+state, fee settings, cost tables and transaction inputs. It compares the
+result, CPU and memory use, and diagnostic events with the primary replay.
+This does not model a network upgrade or predict a different network's
+state. Text labels it non-faithful and JSON puts it under `whatIf` with
+`faithful: false`. The primary report and exit code remain authoritative
+even when the alternate host cannot run the transaction.
+
 ## Inspecting a replay stage
 
 Use `--stage decode` to see the transaction and its declared footprint,
@@ -239,6 +312,7 @@ nothing else.
 | `--retries <N>` | How many times a failed RPC call is retried (0 to 10, default 3; `0` never retries). `SOROREWIND_RETRIES` sets it. |
 | `--deadline <SECONDS>` | How long the whole run may spend on the RPC, retries and waits included (1 to 86400; default none). A call still going then fails with `rpc_unreachable`. `SOROREWIND_DEADLINE` sets it. |
 | `--format <text\|json\|markdown\|html>` | How the report is written: the terminal narrative (`text`, default), the JSON document, Markdown for a GitHub issue or PR, or one self-contained HTML file. See [Sharing a report](#sharing-a-report). |
+| `--what-if-protocol <N>` | Also replay with the other embedded host and compare its result, budget and events with the primary replay. |
 | `--stage <decode\|state\|replay>` | Stop after the selected stage and print its output in text or JSON. |
 | `--json` | Same as `--format json`. |
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
@@ -307,7 +381,7 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 | `feeBump` | Whether it was wrapped in a fee-bump; `hash` is then whichever of the outer and inner hashes you asked for. |
 | `rpc` | Where the responses came from: scheme and host only (a path or query may hold an API key), or `fixture:<dir>`. |
 | `status` | Always `failed`: sororewind only replays failures. |
-| `findings` | What matters, most severe first, as `{ severity, summary, evidence }`. `severity` is `error` (the transaction's own failure), `divergence` (the replay did not reproduce it; the summary names the probable cause), `warning` (an input may differ from what the transaction saw) or `limitation` (something could not be compared or reproduced). `evidence` lists the report fields it rests on, as paths into this document (`failure`, `probableCauses[0]`, `trust.caveats[2]`). The text report prints them at the top; `-v` adds the evidence. |
+| `findings` | What matters, most severe first, as `{ severity, summary, evidence }`, with optional catalog `guidance` (explanation, checks and a verification flag). `severity` is `error` (the transaction's own failure), `divergence` (the replay did not reproduce it; the summary names the probable cause), `warning` (an input may differ from what the transaction saw) or `limitation` (something could not be compared or reproduced). `evidence` lists the report fields it rests on, as paths into this document (`failure`, `probableCauses[0]`, `trust.caveats[2]`). The text report prints them at the top; `-v` adds the evidence. |
 | `fidelity.match`, `fidelity.divergence` | Whether the replay matched, and if not, how it diverged: `result`, `error`, `fee` or `events`. |
 | `probableCauses` | On a divergence, the evidence that probably caused it, strongest first: `{ kind, subject, detail }` with `kind` one of `entry_drifted`, `setting_drifted`, `call_divergence`, `entry_ttl_drifted`, `entry_archived`, `entry_drift_unknown`, `setting_drift_unknown`, `entry_ext_missing`, `prng_seed_fixed`. Empty on a match, and when nothing points anywhere. |
 | `fee` | The non-refundable resource fee the network recorded and the one the replay computes, in stroops (`onchainNonRefundable`, `localNonRefundable`), plus the refundable fee and rent the network kept. |
@@ -480,6 +554,10 @@ CI also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
 the tests on Linux, macOS and Windows, a snapshot check that rejects pending
 or unreferenced snapshots, `cargo doc` with warnings as errors, a `cargo
 check` on the minimum supported Rust (1.89), and `cargo deny check`.
+
+See the [diagnostic integrations RFC](docs/diagnostic-integrations-rfc.md)
+for proposals around evidence-grounded explanations, editor integration
+and a diagnostic API.
 
 ### Embedding and benchmarking
 

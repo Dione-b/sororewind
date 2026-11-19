@@ -16,6 +16,15 @@ and can change between releases.
 
 ### Added
 
+- A composite GitHub Action replays failures with a pinned release, uploads
+  JSON reports and writes replay verdicts to the job summary.
+- `sororewind watch` polls newly closed ledgers for failures involving a
+  contract or account and resumes from a saved checkpoint.
+- Findings can include catalog explanations and unverified checks under
+  `guidance` in JSON.
+- `--what-if-protocol` compares the primary replay with an alternate
+  embedded host and adds an optional `whatIf` object to JSON.
+
 - `--stage decode|state|replay` stops at a selected stage and prints its
   output as text or JSON.
 - `sororewind diff before.json after.json` compares two replay reports with

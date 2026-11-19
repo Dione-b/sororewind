@@ -8,6 +8,8 @@ ledger 5678910 · protocol 30 · 2026-11-11 17:29:53 UTC
 
 findings
   error      the transaction failed: budget error ExceededLimit
+             The refundable fee could not cover the rent or events charged for this invocation.
+             check (not verified): Compare the simulated refundable fee with the transaction budget and storage changes.
   warning    network setting changed after the transaction: LiveSorobanStateSizeWindow
 
 ✓ replay matches network

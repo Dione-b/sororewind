@@ -595,6 +595,7 @@ pub fn sample_report() -> Report {
     let trapped = ResultSummary::from(&InvokeHostFunctionResult::Trapped);
     let diagnostic = "fail [-] error, contract error #3 \"balance too low\"".to_string();
     Report {
+        what_if: None,
         schema_version: SCHEMA_VERSION,
         hash: "a".repeat(64).parse().unwrap(),
         fee_bump: true,
@@ -606,6 +607,7 @@ pub fn sample_report() -> Report {
         status: "failed",
         findings: vec![crate::findings::Finding {
             severity: crate::findings::Severity::Error,
+            guidance: None,
             summary: "the transaction failed: contract error #3".to_string(),
             evidence: vec!["failure".to_string()],
         }],

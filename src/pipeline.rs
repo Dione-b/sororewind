@@ -74,12 +74,24 @@ pub async fn run_with_progress(
     request: &Request,
     progress: &dyn Progress,
 ) -> Result<Report> {
+    run_with_what_if(rpc, request, progress, None).await
+}
+
+/// Run the primary replay and optionally request a hypothetical host comparison.
+#[doc(hidden)]
+pub async fn run_with_what_if(
+    rpc: &RpcClient,
+    request: &Request,
+    progress: &dyn Progress,
+    protocol: Option<u32>,
+) -> Result<Report> {
     let (fetched, tx) = fetch_and_decode(rpc, request, progress).await?;
     let (ledger, state, host) = reconstruct(rpc, &fetched, &tx, progress, true).await?;
     let outcome = run_replay(host, &tx, &state, &ledger, progress)?;
     let fidelity = replay::compare(&tx, &outcome);
     let story = narrate(rpc, request, &state, &outcome).await?;
 
+    let what_if = protocol.map(|protocol| compare_host(protocol, &tx, &state, &ledger, &outcome));
     Ok(assemble(Replayed {
         rpc,
         network: fetched.network,
@@ -89,7 +101,56 @@ pub async fn run_with_progress(
         outcome,
         fidelity,
         story,
+        what_if,
     }))
+}
+
+fn compare_host(
+    protocol: u32,
+    tx: &DecodedTx,
+    state: &Reconstructed,
+    ledger: &LedgerContext,
+    faithful: &ReplayOutcome,
+) -> crate::report::WhatIf {
+    use crate::report::{WhatIf, WhatIfOutcome};
+
+    let alternate = if protocol == ledger.protocol {
+        Err("select the other embedded protocol".to_string())
+    } else {
+        host::for_protocol(protocol)
+            .ok_or_else(|| {
+                format!(
+                    "protocol {protocol} is not embedded (available: {})",
+                    host::describe()
+                )
+            })
+            .and_then(|host| {
+                replay::replay_on_other_host(host, tx, state, ledger)
+                    .map_err(|error| error.to_string())
+            })
+    };
+    let outcome = match alternate {
+        Ok(alternate) => WhatIfOutcome::Compared {
+            result: (&alternate.result).into(),
+            error: alternate.error.as_ref().map(display::describe_error),
+            result_changed: alternate.result != faithful.result
+                || alternate.error != faithful.error,
+            budget: alternate.budget,
+            budget_changed: alternate.budget != faithful.budget,
+            diagnostics: lines(&alternate.diagnostics),
+            first_event_difference: (0..alternate
+                .diagnostics
+                .len()
+                .max(faithful.diagnostics.len()))
+                .find(|&index| alternate.diagnostics.get(index) != faithful.diagnostics.get(index)),
+        },
+        Err(reason) => WhatIfOutcome::Unavailable { reason },
+    };
+    WhatIf {
+        protocol,
+        faithful: false,
+        outcome,
+    }
 }
 
 async fn fetch_and_decode(
@@ -459,6 +520,7 @@ struct Replayed<'a> {
     outcome: ReplayOutcome,
     fidelity: Fidelity,
     story: Story,
+    what_if: Option<crate::report::WhatIf>,
 }
 
 fn assemble(run: Replayed<'_>) -> Report {
@@ -500,6 +562,7 @@ fn assemble(run: Replayed<'_>) -> Report {
     });
     Report {
         schema_version: SCHEMA_VERSION,
+        what_if: run.what_if,
         hash: run.tx.hash.clone(),
         fee_bump: run.tx.fee_bump,
         network: match &run.network {

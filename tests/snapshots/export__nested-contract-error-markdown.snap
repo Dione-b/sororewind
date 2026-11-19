@@ -13,7 +13,7 @@ ledger 5678938 · protocol 30 · 2026-11-11 17:32:13 UTC
 
 ## Findings
 
-- **error** the transaction failed: contract error \#17 in execute (evidence: `failure`)
+- **error** the transaction failed: contract error \#17 in execute (evidence: `failure`) The contract returned an application-defined error. Check (not verified): Check the named error in the contract spec and the innermost failing call's inputs.
 
 ## Where it broke
 

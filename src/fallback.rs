@@ -132,23 +132,9 @@ fn with_attempts(error: RewindError, tried: &[String]) -> RewindError {
 }
 
 fn retry_elsewhere(error: &RewindError) -> bool {
-    match error {
-        RewindError::RpcUnreachable { .. } => true,
-        RewindError::Rpc {
-            code,
-            detail,
-            method,
-            ..
-        } => {
-            *method == "getNetwork"
-                || crate::transport::is_rate_limit(code.unwrap_or_default(), detail)
-                || ["HTTP 502", "HTTP 503", "HTTP 504"]
-                    .iter()
-                    .any(|status| detail.starts_with(status))
-                || error.is_ledger_out_of_range()
-        }
-        _ => false,
-    }
+    error.is_transient_rpc()
+        || error.is_ledger_out_of_range()
+        || matches!(error, RewindError::Rpc { method, .. } if method == "getNetwork")
 }
 
 fn retention_miss(method: &str, params: &Value, body: &str) -> bool {

@@ -444,3 +444,34 @@ fn config_precedence_reaches_the_cli() {
     assert_eq!(unknown.status.code(), Some(1));
     assert!(stderr(&unknown).contains("unknown key"));
 }
+
+#[test]
+fn what_if_p30_preserves_faithful_p29_report_and_exit_status() {
+    let fixture = common::fixture_dir("mainnet-auth-error");
+    let fixture = fixture.to_str().unwrap();
+    let faithful = sororewind(&["--fixture", fixture, "--json"]);
+    let alternate = sororewind(&["--fixture", fixture, "--json", "--what-if-protocol", "30"]);
+    assert_eq!(faithful.status.code(), Some(0), "{}", stderr(&faithful));
+    assert_eq!(
+        alternate.status.code(),
+        faithful.status.code(),
+        "{}",
+        stderr(&alternate)
+    );
+    let faithful: Value = serde_json::from_slice(&faithful.stdout).unwrap();
+    let mut alternate: Value = serde_json::from_slice(&alternate.stdout).unwrap();
+    let what_if = alternate.as_object_mut().unwrap().remove("whatIf").unwrap();
+    assert_eq!(alternate, faithful);
+    assert_eq!(what_if["protocol"], 30);
+    assert_eq!(what_if["faithful"], false);
+    assert_eq!(what_if["status"], "compared");
+    assert!(what_if["budget"]["cpuInsns"].is_number());
+    assert!(what_if["diagnostics"].is_array());
+    let narrative = sororewind(&["--fixture", fixture, "--what-if-protocol", "30"]);
+    assert!(stdout(&narrative).contains("what-if protocol 30 (non-faithful)"));
+
+    let unavailable = sororewind(&["--fixture", fixture, "--json", "--what-if-protocol", "999"]);
+    assert_eq!(unavailable.status.code(), Some(0));
+    let unavailable: Value = serde_json::from_slice(&unavailable.stdout).unwrap();
+    assert_eq!(unavailable["whatIf"]["status"], "unavailable");
+}

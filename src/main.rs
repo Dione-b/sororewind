@@ -15,6 +15,7 @@ use sororewind::render::{self, Detail};
 use sororewind::{Report, Result};
 
 mod diff;
+mod watch_cli;
 
 /// Diagnostics go to stderr, tagged with where they came from: `[rpc] → …`.
 /// This is the only place in the program that writes to stderr.
@@ -65,8 +66,13 @@ async fn run(cli: &Cli) -> Result<Report> {
     } else {
         &Silent
     };
-    let result =
-        sororewind::run_with_progress(&connection.rpc, &connection.request, progress).await;
+    let result = sororewind::pipeline::run_with_what_if(
+        &connection.rpc,
+        &connection.request,
+        progress,
+        cli.what_if_protocol,
+    )
+    .await;
     if let Some(recording) = &connection.recording {
         // Only a run that got as far as a report is a fixture worth having:
         // anything else would replay as a different error, or as another
@@ -109,6 +115,9 @@ async fn main() -> ExitCode {
             },
             Err(error) => finish(Err(error)),
         };
+    }
+    if let Some(Command::Watch(args)) = cli.command.take() {
+        return finish(watch_cli::run(&mut cli, args).await);
     }
     // `--completions` and `--man` stand alone (clap rejects anything next
     // to them), so there is nothing to replay.

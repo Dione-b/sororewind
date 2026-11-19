@@ -134,12 +134,19 @@ fn report_document(report: &Report) -> Document {
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default();
-                vec![
+                let mut spans = vec![
                     strong(severity),
                     text(format!(" {} (evidence: ", finding.summary)),
                     code(finding.evidence.join(", ")),
                     text(")"),
-                ]
+                ];
+                if let Some(guidance) = &finding.guidance {
+                    spans.push(text(format!(" {}", guidance.explanation)));
+                    for check in guidance.checks {
+                        spans.push(text(format!(" Check (not verified): {check}")));
+                    }
+                }
+                spans
             })
             .collect(),
     ));
@@ -189,6 +196,19 @@ fn report_document(report: &Report) -> Document {
             open: false,
             body: diagnostics,
         });
+    }
+
+    if let Some(what_if) = &report.what_if {
+        blocks.push(Block::Heading(
+            2,
+            format!("What-if protocol {} (non-faithful)", what_if.protocol),
+        ));
+        blocks.push(Block::List(
+            render::what_if_lines(report, what_if)
+                .into_iter()
+                .map(|line| vec![text(line)])
+                .collect(),
+        ));
     }
 
     Document {

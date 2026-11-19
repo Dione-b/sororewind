@@ -33,7 +33,7 @@ summary { cursor: pointer; font-weight: 600; }
 </ul>
 <h2>Findings</h2>
 <ul>
-<li><strong>error</strong> the transaction failed: contract error #17 in execute (evidence: <code>failure</code>)</li>
+<li><strong>error</strong> the transaction failed: contract error #17 in execute (evidence: <code>failure</code>) The contract returned an application-defined error. Check (not verified): Check the named error in the contract spec and the innermost failing call&#39;s inputs.</li>
 </ul>
 <h2>Where it broke</h2>
 <ul>

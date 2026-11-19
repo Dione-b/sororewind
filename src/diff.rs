@@ -68,6 +68,7 @@ pub fn compare(before: &Path, after: &Path) -> Result<(String, bool)> {
         ("Events", &["diagnostics"]),
         ("Budget", &["budget"]),
         ("Footprint", &["footprint"]),
+        ("What-if", &["whatIf"]),
     ];
     let mut output = String::new();
     for (section, fields) in sections {

@@ -77,6 +77,54 @@ pub struct Report {
     pub prng_seed: PrngSeed,
     /// The diagnostic events of both runs.
     pub diagnostics: Diagnostics,
+    /// Optional comparison with a different embedded protocol host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub what_if: Option<WhatIf>,
+}
+
+/// A counterfactual replay using the original ledger inputs on another host.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhatIf {
+    /// Protocol selected for the hypothetical replay.
+    pub protocol: u32,
+    /// Always false. Only the primary replay can reproduce the original ledger.
+    pub faithful: bool,
+    /// Whether the alternate host produced a comparable result.
+    #[serde(flatten)]
+    pub outcome: WhatIfOutcome,
+}
+
+/// Output from an alternate host, or the reason it could not run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum WhatIfOutcome {
+    /// The alternate host ran.
+    Compared {
+        /// The alternate host's result.
+        result: ResultSummary,
+        /// The alternate host's underlying error, when present.
+        error: Option<String>,
+        /// Whether the result or underlying error changed.
+        result_changed: bool,
+        /// CPU and memory measured under the alternate host.
+        budget: crate::replay::BudgetUse,
+        /// Whether CPU or memory usage changed.
+        budget_changed: bool,
+        /// Alternate host's diagnostic events.
+        diagnostics: Vec<String>,
+        /// Index of the first differing event, including length differences.
+        first_event_difference: Option<usize>,
+    },
+    /// The alternate host could not run with these inputs.
+    Unavailable {
+        /// Why there is no comparison.
+        reason: String,
+    },
 }
 
 impl Report {
