@@ -126,6 +126,10 @@ new protocol N:
 7. **Run `just check` and `just live`.**
 8. **Update the docs.** Update the protocol mentions in the README, and add
    the upgrade to `CHANGELOG.md`.
+9. **Refresh the compatibility matrix.** Update `docs/compatibility.md` with
+   the supported hosts and exact host versions, network defaults, RPC
+   retention notes, and MSRV. Keep its source references aligned with
+   `src/host/mod.rs`, `Cargo.toml`, `src/network.rs`, and the MSRV check.
 
 The two hosts are linked in one ordinary Cargo build, so their shared
 dependencies resolve to one version each. stellar-core does not do this in

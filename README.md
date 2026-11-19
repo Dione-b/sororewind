@@ -93,6 +93,10 @@ That covers testnet and mainnet through an upgrade, when testnet runs the new
 protocol weeks before mainnet does. `sororewind --version` tells you what your
 build supports.
 
+See the [compatibility matrix](docs/compatibility.md) for supported host
+versions, networks, default RPCs, historical data notes, and the minimum Rust
+version.
+
 ## Quick start
 
 Paste a hash (64 hex characters, `0x` optional). Testnet is the default:
@@ -188,6 +192,15 @@ turn into markup.
 When the run fails (exit `1`) the same format is used for the error:
 Markdown and HTML get a short document with the stage, the kind and the
 message, `json` its error document, and `text` only the message on stderr.
+
+## Feedback and bug reports
+
+If you use sororewind against production Soroban transactions, please share
+what worked, where a replay diverged, and which output was useful using the
+[production feedback form](https://github.com/Dione-b/sororewind/issues/new?template=production_feedback.md).
+For a specific mismatch, use the [report a divergence form](https://github.com/Dione-b/sororewind/issues/new?template=report_divergence.md).
+Remove credentials and private information from RPC URLs and logs before
+submitting them.
 
 ## Replay failures in GitHub Actions
 
