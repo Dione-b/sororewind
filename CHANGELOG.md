@@ -14,6 +14,8 @@ and can change between releases.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
 ### Added
 
 - A composite GitHub Action replays failures with a pinned release, uploads
@@ -24,6 +26,10 @@ and can change between releases.
   `guidance` in JSON.
 - `--what-if-protocol` compares the primary replay with an alternate
   embedded host and adds an optional `whatIf` object to JSON.
+- `docs/compatibility.md` publishes the supported Soroban hosts and versions,
+  networks, default RPCs, historical-data caveats, and minimum Rust version.
+- GitHub issue templates invite feedback from production Soroban users and
+  collect the transaction, JSON report, and verbose log for replay divergences.
 
 - `--stage decode|state|replay` stops at a selected stage and prints its
   output as text or JSON.
