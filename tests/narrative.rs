@@ -117,6 +117,54 @@ fn every_fixture_has_a_test() {
     );
 }
 
+#[tokio::test]
+async fn every_fixture_has_a_current_gallery_example() {
+    let gallery = include_str!("../docs/examples.md");
+    for name in FIXTURES {
+        let heading = format!("\n## {name}\n");
+        let section = gallery
+            .split_once(&heading)
+            .unwrap_or_else(|| panic!("missing gallery section for {name}"))
+            .1;
+        let section = section.split("\n## ").next().unwrap();
+        let hash = common::fixture_hash(name).await;
+        let network = if name.starts_with("mainnet-") {
+            "mainnet"
+        } else {
+            "testnet"
+        };
+        assert!(
+            section.contains(&format!(
+                "Original network `{network}` and transaction `{hash}`."
+            )),
+            "update the original network and hash for {name} in docs/examples.md"
+        );
+        assert!(
+            section.contains(&format!(
+                "```bash\nsororewind --fixture fixtures/{name}\n```"
+            )),
+            "missing gallery command for {name}"
+        );
+
+        let snapshot = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/snapshots")
+                .join(format!("narrative__{name}.snap")),
+        )
+        .unwrap();
+        let transcript = snapshot.split_once("\n---\n").unwrap().1;
+        let (status, output) = transcript.split_once('\n').unwrap();
+        let status = status.strip_prefix("--- exit code: ").unwrap();
+        assert!(
+            section.contains(&format!(
+                "Expected output (exit status `{status}`).\n\n```text\n{}\n```",
+                output.trim_end()
+            )),
+            "update the example output for {name} in docs/examples.md from its narrative snapshot"
+        );
+    }
+}
+
 /// Fixtures are committed; keep them small. The cap was raised from 1 MB on
 /// purpose when fixtures started to keep the ledger entry changes their
 /// replay rebuilds entries from: most of it is `mainnet-auth-error`, whose

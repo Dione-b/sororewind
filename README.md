@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Dione-b/sororewind/actions/workflows/ci.yml/badge.svg)](https://github.com/Dione-b/sororewind/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Dione-b/sororewind?include_prereleases)](https://github.com/Dione-b/sororewind/releases)
+[![docs.rs](https://docs.rs/sororewind/badge.svg)](https://docs.rs/sororewind)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 **Rewind a failed Soroban transaction, run it again on your machine, and see
@@ -11,6 +12,9 @@ exactly where it broke.**
 $ sororewind --fixture fixtures/contract-error
 sororewind  dd1f9b…53db  testnet
 ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
+
+findings
+  error      the transaction failed: contract error #10 in transfer
 
 ✓ replay matches network
   on-chain  trapped
@@ -116,6 +120,9 @@ git clone https://github.com/Dione-b/sororewind && cd sororewind
 sororewind --fixture fixtures/contract-error
 ```
 
+The [offline example gallery](https://github.com/Dione-b/sororewind/blob/master/docs/examples.md)
+shows the command and expected output for every recorded fixture.
+
 A few things worth knowing:
 
 - **It only replays failures.** The transaction must have failed inside the
@@ -212,6 +219,7 @@ nothing else.
 | `--fixture <DIR>` | Replay offline from a recorded fixture. The hash is optional (the fixture knows it); a different one is an error. Not combinable with `--rpc-url`. |
 | `--completions <SHELL>` | Print a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`, e.g. `sororewind --completions fish > ~/.config/fish/completions/sororewind.fish`. |
 | `--man` | Print a man page, e.g. `sororewind --man > ~/.local/share/man/man1/sororewind.1`. |
+| `-h, --help` | Show usage, options and examples. |
 | `-V, --version` | Version, supported protocols, and the commit and target it was built from. Paste it into bug reports. |
 
 Default RPCs: `https://soroban-testnet.stellar.org` (testnet),
@@ -471,6 +479,8 @@ RPC still has those transactions.
 A new fixture also needs a line in the `fixtures!` list in
 `tests/narrative.rs` and an accepted snapshot: run `cargo insta review` (`just
 snap`), after `cargo install cargo-insta`.
+Add its command, original transaction and snapshot output to the
+[offline example gallery](docs/examples.md).
 
 Each fixture comes from a `find_failed` category:
 

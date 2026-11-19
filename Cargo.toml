@@ -3,14 +3,20 @@ name = "sororewind"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Replay a failed Soroban transaction locally and narrate the call tree to the point of failure"
+description = "Replay failed Soroban transactions locally and diagnose failures with a narrated call tree"
 license = "Apache-2.0"
 repository = "https://github.com/Dione-b/sororewind"
 homepage = "https://github.com/Dione-b/sororewind"
+documentation = "https://docs.rs/sororewind"
 readme = "README.md"
 keywords = ["stellar", "soroban", "debugging", "replay", "blockchain"]
 categories = ["command-line-utilities", "development-tools::debugging"]
 exclude = ["fixtures/", "tests/", ".github/"]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
+rustdoc-args = ["-D", "warnings"]
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
