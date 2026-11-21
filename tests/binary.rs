@@ -542,3 +542,19 @@ fn what_if_p30_preserves_faithful_p29_report_and_exit_status() {
     let unavailable: Value = serde_json::from_slice(&unavailable.stdout).unwrap();
     assert_eq!(unavailable["whatIf"]["status"], "unavailable");
 }
+
+#[test]
+fn what_if_p29_runs_with_p30_cost_parameters() {
+    // A protocol-30 ledger lists cost types the protocol-29 budget does not
+    // price; the what-if must drop them rather than fail to start.
+    let fixture = common::fixture_dir("contract-error");
+    let fixture = fixture.to_str().unwrap();
+    let output = sororewind(&["--fixture", fixture, "--json", "--what-if-protocol", "29"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["protocol"], 30);
+    let what_if = &report["whatIf"];
+    assert_eq!(what_if["protocol"], 29);
+    assert_eq!(what_if["status"], "compared", "{what_if}");
+    assert!(what_if["budget"]["cpuInsns"].is_number());
+}

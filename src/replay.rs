@@ -68,8 +68,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use stellar_xdr::{
-    ContractCodeEntryExt, ContractEvent, ContractEventBody, ContractEventType, ContractEventV0,
-    DiagnosticEvent, ExtensionPoint, Hash, InvokeHostFunctionResult,
+    ContractCodeEntryExt, ContractCostParams, ContractEvent, ContractEventBody, ContractEventType,
+    ContractEventV0, DiagnosticEvent, ExtensionPoint, Hash, InvokeHostFunctionResult,
     InvokeHostFunctionSuccessPreImage, LedgerEntryData, LedgerKey, Limits, ReadXdr, ScBytes,
     ScError, ScErrorCode, ScString, ScSymbol, ScVal, ScVec, StringM,
 };
@@ -284,6 +284,27 @@ pub(crate) fn replay_on_other_host(
     replay_with_protocol(host, tx, state, ledger, host.protocol)
 }
 
+/// The network's cost parameters, as `host` can take them. A newer protocol
+/// appends cost types an older host cannot price, and its budget rejects a
+/// list longer than its own. Those types meter only what the newer protocol
+/// added, which the older host never runs, so a what-if on an older host
+/// drops them. The faithful replay always gets the list unchanged.
+fn cost_params_for(
+    host: &host::Host,
+    protocol: u32,
+    ledger: &LedgerContext,
+    params: &ContractCostParams,
+) -> Result<ContractCostParams> {
+    if protocol == ledger.protocol || params.0.len() <= host.cost_types {
+        return Ok(params.clone());
+    }
+    params.0[..host.cost_types]
+        .to_vec()
+        .try_into()
+        .map(ContractCostParams)
+        .map_err(|e| RewindError::Replay(format!("could not trim the cost parameters: {e}")))
+}
+
 fn replay_with_protocol(
     host: &host::Host,
     tx: &DecodedTx,
@@ -334,9 +355,12 @@ fn replay_with_protocol(
         prng_seed: seed,
         cpu_limit: budget_use.cpu_limit,
         mem_limit: budget_use.mem_limit,
-        cpu_cost_params: codec::encode(&state.config.cpu_cost_params, "the CPU cost parameters")?,
+        cpu_cost_params: codec::encode(
+            &cost_params_for(host, protocol, ledger, &state.config.cpu_cost_params)?,
+            "the CPU cost parameters",
+        )?,
         mem_cost_params: codec::encode(
-            &state.config.mem_cost_params,
+            &cost_params_for(host, protocol, ledger, &state.config.mem_cost_params)?,
             "the memory cost parameters",
         )?,
         contracts: contracts(state)?,
