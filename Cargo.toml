@@ -1,6 +1,6 @@
 [package]
 name = "sororewind"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.89"
 description = "Replay failed Soroban transactions locally and diagnose failures with compiler-style diagnostics and a narrated call tree"
