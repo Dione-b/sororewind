@@ -5,8 +5,9 @@ Each fixture contains the recorded RPC responses, original transaction hash
 and network information needed for the replay. The commands work without
 network access.
 
-The examples show the default text output captured by the narrative tests.
-The exit status is shown separately because the CLI reports it to the shell.
+Each example shows the default output, a compiler-style diagnostic, and the
+full narrative `--trace` prints, both captured by the narrative tests. The
+exit status is shown separately because the CLI reports it to the shell.
 
 ## contract-error
 
@@ -19,6 +20,23 @@ sororewind --fixture fixtures/contract-error
 ```
 
 Expected output (exit status `0`).
+
+```text
+error[SRW1004]: Contract returned an error
+ --> CDLZF…GCYSC::transfer()
+
+  error  BalanceError (#10)
+  cause  The transfer would put an account balance outside the token's permitted range.
+  help   Compare the attempted amount with the available balance and any account limits.
+
+✓ replay: trap reproduced · testnet / ledger 5672381
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/contract-error --trace
+```
 
 ```text
 sororewind  dd1f9b…53db  testnet
@@ -53,6 +71,23 @@ sororewind --fixture fixtures/nested-contract-error
 ```
 
 Expected output (exit status `0`).
+
+```text
+error[SRW1004]: Contract returned an error
+ --> CCUHQ…OC6VO::execute()
+
+  error  Limit (#17)
+  cause  The contract returned an application-defined error.
+  help   Check the named error in the contract spec and the innermost failing call's inputs.
+
+✓ replay: trap reproduced · testnet / ledger 5678938
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/nested-contract-error --trace
+```
 
 ```text
 sororewind  4420c1…03a0  testnet
@@ -113,6 +148,24 @@ sororewind --fixture fixtures/auth-error
 Expected output (exit status `0`).
 
 ```text
+error[SRW1002]: Authorization failed
+ --> CDLZF…GCYSC::transfer()
+
+  rejected  InsufficientSignatures (#3) in __check_auth
+  host      auth/InvalidAction
+  cause     A custom account rejected authorization and the host surfaced its contract error.
+  help      Inspect the named cause and its __check_auth call.
+
+✓ replay: trap reproduced · testnet / ledger 5670652
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/auth-error --trace
+```
+
+```text
 sororewind  b5f65d…00a0  testnet
 ledger 5670652 · protocol 30 · 2026-11-11 06:01:43 UTC
 
@@ -150,6 +203,24 @@ sororewind --fixture fixtures/auth-check-auth
 ```
 
 Expected output (exit status `0`).
+
+```text
+error[SRW1002]: Authorization failed
+ --> CDLZF…GCYSC::transfer()
+
+  rejected  SpendingLimitExceeded (#3) in __check_auth
+  host      auth/InvalidAction
+  cause     A custom account rejected authorization and the host surfaced its contract error.
+  help      Inspect the named cause and its __check_auth call.
+
+✓ replay: trap reproduced · testnet / ledger 5549745
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/auth-check-auth --trace
+```
 
 ```text
 sororewind  9340ee…5a96  testnet
@@ -191,6 +262,24 @@ sororewind --fixture fixtures/budget-error
 Expected output (exit status `0`).
 
 ```text
+error[SRW1003]: Resource limit exceeded
+ --> CCQ2V…T47BD::__check_auth()
+
+  host     budget/ExceededLimit
+  message  escalating error to VM trap from failed host function call: verify_sig_ed25519
+  cause    The invocation exceeded a resource limit.
+  help     Check the budget section and diagnostic message for the resource that ran out.
+
+✓ replay: failure reproduced (resource limit exceeded) · testnet / ledger 5670060
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/budget-error --trace
+```
+
+```text
 sororewind  608924…c093  testnet
 ledger 5670060 · protocol 30 · 2026-11-11 05:12:23 UTC
 
@@ -226,6 +315,23 @@ sororewind --fixture fixtures/storage-error
 Expected output (exit status `0`).
 
 ```text
+error[SRW1001]: Undeclared storage access
+ --> CBLLS…ZSMCM::withdraw_position()
+
+  key    [UserRewardState, GAEGW…JD4BM]
+  cause  The contract accessed a ledger key outside the declared transaction footprint.
+  help   Check the key in the diagnostic against the simulated read-only and read-write footprint.
+
+✓ replay: trap reproduced · testnet / ledger 5672305
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/storage-error --trace
+```
+
+```text
 sororewind  974594…eeae  testnet
 ledger 5672305 · protocol 30 · 2026-11-11 08:19:28 UTC
 
@@ -259,6 +365,25 @@ sororewind --fixture fixtures/refundable-fee
 ```
 
 Expected output (exit status `0`).
+
+```text
+error[SRW1007]: Insufficient refundable fee
+
+  host     budget/ExceededLimit
+  message  refundable resource fee was not sufficient to cover the ledger storage rent: {} > {} [8992, 5119]
+  cause    The refundable fee could not cover the rent or events charged for this invocation.
+  help     Compare the simulated refundable fee with the transaction budget and storage changes.
+
+✓ replay: failure reproduced (insufficient refundable fee) · testnet / ledger 5678910
+  ! the replay rests on 1 unverified input
+  --trace shows the call tree and the evidence
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/refundable-fee --trace
+```
 
 ```text
 sororewind  8a5229…11e0  testnet
@@ -299,6 +424,23 @@ sororewind --fixture fixtures/rebuilt-entry
 Expected output (exit status `0`).
 
 ```text
+error[SRW1001]: Undeclared storage access
+ --> CD4KF…GXOPW::write_prices()
+
+  key    "BTC"
+  cause  The contract accessed a ledger key outside the declared transaction footprint.
+  help   Check the key in the diagnostic against the simulated read-only and read-write footprint.
+
+✓ replay: trap reproduced · testnet / ledger 5679032
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/rebuilt-entry --trace
+```
+
+```text
 sororewind  ce4e87…ce44  testnet
 ledger 5679032 · protocol 30 · 2026-11-11 17:40:03 UTC
 
@@ -332,6 +474,26 @@ sororewind --fixture fixtures/mainnet-auth-error
 ```
 
 Expected output (exit status `0`).
+
+```text
+error[SRW1002]: Authorization failed
+ --> CBBMQ…IBUCV::swap()
+
+  host     auth/ExistingValue
+  message  nonce already exists for address [GBOT3…CDPLR]
+  cause    The authorization check encountered an existing value, such as a consumed nonce.
+  help     Check the diagnostic message and the account's nonce, then compare with fresh simulation.
+
+✓ replay: trap reproduced · mainnet / ledger 65424472
+  ! the replay rests on 2 unverified inputs
+  --trace shows the call tree and the evidence
+```
+
+With `--trace`, the narrative and the call tree:
+
+```bash
+sororewind --fixture fixtures/mainnet-auth-error --trace
+```
 
 ```text
 sororewind  75530f…2fc9  mainnet

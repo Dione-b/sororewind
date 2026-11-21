@@ -1,0 +1,13 @@
+---
+source: tests/binary.rs
+expression: "format!(\"--- exit code: 2\\n{text}\").replace(&path, \"<fixture>\")"
+---
+--- exit code: 2
+error[SRW1003]: Resource limit exceeded
+
+  result  resource limit exceeded
+  cause   The network recorded a resource limit failure.
+  help    Check the declared limits against the CPU, memory and ledger-access diagnostics.
+
+✗ replay: replay mismatch (result) · on-chain resource limit exceeded / local trapped · testnet / ledger 5672381
+  --trace shows the call tree and the evidence

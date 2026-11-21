@@ -19,9 +19,20 @@ async fn check(name: &str, expected: Outcome) {
         .as_ref()
         .unwrap_or_else(|err| panic!("fixture {name} could not be replayed: {err}"));
 
-    // The narrative, exactly as a user sees it.
+    // The narrative, exactly as `--trace` shows it.
     let human = render::human(report, false, Detail::Summary);
     insta::assert_snapshot!(name, common::transcript(&result, &human));
+    // The compact diagnostic, the default text output.
+    let compact = render::human(report, false, Detail::Compact);
+    insta::assert_snapshot!(
+        format!("{name}-compact"),
+        common::transcript(&result, &compact)
+    );
+    assert!(compact.lines().count() <= 12, "{name}: {compact}");
+    assert!(
+        !compact.lines().any(|line| line == "call tree"),
+        "{name}: {compact}"
+    );
 
     // The tool's core trust criterion: a fixture recorded as a match must
     // keep matching, and a fixture kept as a divergence must keep diverging.
@@ -64,6 +75,26 @@ async fn check(name: &str, expected: Outcome) {
     };
     assert_eq!(guidance["id"], expected_guidance, "{name}");
     assert_eq!(guidance["verified"], false, "{name}");
+
+    // The primary diagnostic's stable code, from the same report.
+    let expected_code = match name {
+        "storage-error" | "rebuilt-entry" => "SRW1001",
+        "auth-check-auth" | "auth-error" | "mainnet-auth-error" => "SRW1002",
+        "budget-error" => "SRW1003",
+        "contract-error" | "nested-contract-error" => "SRW1004",
+        "refundable-fee" => "SRW1007",
+        _ => panic!("set the expected diagnostic code for {name}"),
+    };
+    assert_eq!(json["diagnostic"]["code"], expected_code, "{name}");
+    assert!(
+        compact.starts_with(&format!("error[{expected_code}]: ")),
+        "{name}: {compact}"
+    );
+    assert_eq!(
+        json["replay"]["outcomeMatches"],
+        json["result"]["onchain"]["code"] == json["result"]["local"]["code"],
+        "{name}"
+    );
 
     assert_eq!(
         json["result"]["onchain"]["code"] == json["result"]["local"]["code"],
@@ -160,21 +191,31 @@ async fn every_fixture_has_a_current_gallery_example() {
             "missing gallery command for {name}"
         );
 
-        let snapshot = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/snapshots")
-                .join(format!("narrative__{name}.snap")),
-        )
-        .unwrap();
-        let transcript = snapshot.split_once("\n---\n").unwrap().1;
-        let (status, output) = transcript.split_once('\n').unwrap();
-        let status = status.strip_prefix("--- exit code: ").unwrap();
+        let snapshot = |file: &str| {
+            let snapshot = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/snapshots")
+                    .join(format!("narrative__{file}.snap")),
+            )
+            .unwrap();
+            let transcript = snapshot.split_once("\n---\n").unwrap().1.to_string();
+            let (status, output) = transcript.split_once('\n').unwrap();
+            let status = status.strip_prefix("--- exit code: ").unwrap().to_string();
+            (status, output.trim_end().to_string())
+        };
+        let (status, compact) = snapshot(&format!("{name}-compact"));
         assert!(
             section.contains(&format!(
-                "Expected output (exit status `{status}`).\n\n```text\n{}\n```",
-                output.trim_end()
+                "Expected output (exit status `{status}`).\n\n```text\n{compact}\n```"
             )),
-            "update the example output for {name} in docs/examples.md from its narrative snapshot"
+            "update the example output for {name} in docs/examples.md from its compact snapshot"
+        );
+        let (_, narrative) = snapshot(name);
+        assert!(
+            section.contains(&format!(
+                "```bash\nsororewind --fixture fixtures/{name} --trace\n```\n\n```text\n{narrative}\n```"
+            )),
+            "update the --trace output for {name} in docs/examples.md from its narrative snapshot"
         );
     }
 }

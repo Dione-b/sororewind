@@ -3,11 +3,12 @@
 //! Start a replay with [`run`] and a [`Request`]. Use [`HttpTransport`]
 //! for live RPC requests or [`FixtureTransport`] for an offline recording.
 //! [`run_with_progress`] also reports stage transitions. The returned
-//! [`Report`] gives callers the outcome, diagnostics, call tree and evidence
-//! about the state used by the replay.
+//! [`Report`] gives callers the outcome, the primary [`Diagnostic`] with its
+//! stable code, diagnostics, call tree and evidence about the state used by
+//! the replay.
 //!
 //! The supported library interface consists of the items re-exported here,
-//! the [`render`] functions and their public types, and the public fields
+//! the [`render`] functions and their public types, the [`diagnostic`] types, and the public fields
 //! of the report and its component types. See the changelog for the
 //! compatibility policy.
 
@@ -23,6 +24,7 @@ pub mod codec;
 mod config;
 #[doc(hidden)]
 pub mod culprit;
+pub mod diagnostic;
 #[doc(hidden)]
 pub mod discover;
 #[doc(hidden)]
@@ -75,6 +77,7 @@ pub mod watch;
 mod test_support;
 
 pub use culprit::{Culprit, CulpritKind};
+pub use diagnostic::Diagnostic;
 pub use error::{Result, Retention, RewindError, Stage};
 pub use findings::{Finding, Guidance, Severity};
 pub use hash::TxHash;

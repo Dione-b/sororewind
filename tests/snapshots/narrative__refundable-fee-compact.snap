@@ -1,0 +1,15 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1007]: Insufficient refundable fee
+
+  host     budget/ExceededLimit
+  message  refundable resource fee was not sufficient to cover the ledger storage rent: {} > {} [8992, 5119]
+  cause    The refundable fee could not cover the rent or events charged for this invocation.
+  help     Compare the simulated refundable fee with the transaction budget and storage changes.
+
+✓ replay: failure reproduced (insufficient refundable fee) · testnet / ledger 5678910
+  ! the replay rests on 1 unverified input
+  --trace shows the call tree and the evidence

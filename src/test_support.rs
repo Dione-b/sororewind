@@ -594,6 +594,30 @@ pub fn sample_report() -> Report {
 
     let trapped = ResultSummary::from(&InvokeHostFunctionResult::Trapped);
     let diagnostic = "fail [-] error, contract error #3 \"balance too low\"".to_string();
+    let result = ResultPair {
+        onchain: trapped.clone(),
+        local: trapped,
+    };
+    let fee = FeeReport {
+        onchain_non_refundable: Some(8_521),
+        local_non_refundable: 8_521,
+        onchain_refundable: Some(0),
+        onchain_rent: Some(0),
+    };
+    let trust = crate::trust::Trust {
+        verified: true,
+        caveats: Vec::new(),
+    };
+    let inputs = crate::findings::Inputs {
+        fidelity: &Fidelity::MATCH,
+        result: &result,
+        failure: story.failure.as_ref(),
+        fee: &fee,
+        probable_causes: &[],
+        trust: &trust,
+    };
+    let primary = crate::diagnostic::derive(&inputs);
+    let replay = crate::diagnostic::replay(&inputs);
     Report {
         what_if: None,
         schema_version: SCHEMA_VERSION,
@@ -611,11 +635,10 @@ pub fn sample_report() -> Report {
             summary: "the transaction failed: contract error #3".to_string(),
             evidence: vec!["failure".to_string()],
         }],
+        diagnostic: primary,
+        replay,
         fidelity: Fidelity::MATCH,
-        result: ResultPair {
-            onchain: trapped.clone(),
-            local: trapped,
-        },
+        result,
         story,
         budget: BudgetUse {
             cpu_insns: 1_234_567,
@@ -625,16 +648,8 @@ pub fn sample_report() -> Report {
             network_cpu_insns: Some(1_234_567),
             network_mem_bytes: Some(1_048_576),
         },
-        fee: FeeReport {
-            onchain_non_refundable: Some(8_521),
-            local_non_refundable: 8_521,
-            onchain_refundable: Some(0),
-            onchain_rent: Some(0),
-        },
-        trust: crate::trust::Trust {
-            verified: true,
-            caveats: Vec::new(),
-        },
+        fee,
+        trust,
         probable_causes: Vec::new(),
         footprint: FootprintReport {
             entries: 4,

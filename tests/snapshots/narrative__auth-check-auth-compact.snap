@@ -1,0 +1,14 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1002]: Authorization failed
+ --> CDLZF…GCYSC::transfer()
+
+  rejected  SpendingLimitExceeded (#3) in __check_auth
+  host      auth/InvalidAction
+  cause     A custom account rejected authorization and the host surfaced its contract error.
+  help      Inspect the named cause and its __check_auth call.
+
+✓ replay: trap reproduced · testnet / ledger 5549745

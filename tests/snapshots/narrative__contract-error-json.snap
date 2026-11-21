@@ -35,6 +35,29 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
     }
   ],
   "closeTime": 1794385548,
+  "diagnostic": {
+    "cause": "The transfer would put an account balance outside the token's permitted range.",
+    "code": "SRW1004",
+    "details": {
+      "contractCode": 10,
+      "errorName": "BalanceError",
+      "hostError": "contract",
+      "result": "trapped"
+    },
+    "evidence": {
+      "helpVerified": false,
+      "outcomeReproduced": true,
+      "source": "host_diagnostic"
+    },
+    "help": "Compare the attempted amount with the available balance and any account limits.",
+    "kind": "contract_error",
+    "location": {
+      "contract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      "function": "transfer"
+    },
+    "message": "Contract returned an error",
+    "severity": "error"
+  },
   "diagnostics": {
     "local": [
       "fail [-] fn_call, 0xd7928b72c2703ccf…(32 bytes), transfer [GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000]",
@@ -168,6 +191,12 @@ expression: "serde_json::to_string_pretty(&json).unwrap()"
   "prngSeed": "derived",
   "probableCauses": [],
   "protocol": 30,
+  "replay": {
+    "local": "trapped",
+    "onChain": "trapped",
+    "outcomeMatches": true,
+    "status": "trap_reproduced"
+  },
   "result": {
     "local": {
       "code": "trapped",

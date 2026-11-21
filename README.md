@@ -10,26 +10,18 @@ exactly where it broke.**
 
 ```
 $ sororewind --fixture fixtures/contract-error
-sororewind  dd1f9b…53db  testnet
-ledger 5672381 · protocol 30 · 2026-11-11 08:25:48 UTC
+error[SRW1004]: Contract returned an error
+ --> CDLZF…GCYSC::transfer()
 
-findings
-  error      the transaction failed: contract error #10 in transfer
-             The transfer would put an account balance outside the token's permitted range.
-             check (not verified): Compare the attempted amount with the available balance and any account limits.
+  error  BalanceError (#10)
+  cause  The transfer would put an account balance outside the token's permitted range.
+  help   Compare the attempted amount with the available balance and any account limits.
 
-✓ replay matches network
-  on-chain  trapped
-  local     trapped
-
-where it broke
-  contract error #10 · BalanceError
-  "resulting balance is not within the allowed range [10000000, -15000000100, 9223372036854775807]"
-  in CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer (depth 0)
-
-call tree
-CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC::transfer(GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000)  ✗
+✓ replay: trap reproduced · testnet / ledger 5672381
 ```
+
+`--trace` prints the whole story: the findings, the verdict, where it broke
+and the decoded call tree.
 
 **Contents:** [Install](#install) · [Quick start](#quick-start) ·
 [Reading the output](#reading-the-output) · [Options](#options) ·
@@ -49,7 +41,9 @@ sororewind gives you a story instead. Hand it a hash and it:
    settings and the ledger header, as they were *at that moment*, not as they
    are now.
 3. **Replays** it with the same `soroban-env-host` the network ran.
-4. **Tells you** which call failed, with what error, and how it got there.
+4. **Tells you** what failed, the way a compiler reports an error: a stable
+   code, the contract and function, the values that matter and one thing to
+   check. `--trace` adds which call failed and how it got there.
 
 And it doesn't ask you to take its word for it. Every replay is checked
 against the result the network recorded. A match means the call tree you are
@@ -144,8 +138,60 @@ A few things worth knowing:
 
 ## Reading the output
 
-Every report has a header, a verdict and a call tree. The rest shows up when
-it has something to say, or when you ask for more.
+By default sororewind prints one diagnostic, compiler-style, and the replay's
+verdict:
+
+```text
+error[SRW1001]: Undeclared storage access
+ --> CBLLS…ZSMCM::withdraw_position()
+
+  key    [UserRewardState, GAEGW…JD4BM]
+  cause  The contract accessed a ledger key outside the declared transaction footprint.
+  help   Check the key in the diagnostic against the simulated read-only and read-write footprint.
+
+✓ replay: trap reproduced · testnet / ledger 5672305
+```
+
+- **`error[CODE]: message`** names the failure. The code is stable, so a
+  script, a CI job or an agent can key on it (table below).
+- **`-->`** is the contract and function whose frame raised the error, when
+  one was open. Identifiers are shortened here; `--trace`, `-v` and `--json`
+  show them whole.
+- **The labelled lines** are only those that matter for this kind of failure
+  and that the evidence supports: the key outside the footprint, the
+  contract's error name, the account contract that rejected authorization, the
+  host error and its message. Anything unknown is left out, never guessed.
+  `cause` and `help` come from a catalog of known failures: what this kind of
+  failure usually means and one thing to check. They are suggestions, not a
+  verified diagnosis.
+- **`✓ replay: trap reproduced`** means the local run passed the fidelity
+  check: the same result code, error and resource fee, and diagnostic events
+  that are the start of the network's (see
+  [Why a replay can diverge](#why-a-replay-can-diverge)). It claims nothing
+  that check did not compare. `failure reproduced`
+  says the same for a failure other than a trap. `✗ replay: replay mismatch`
+  says what differed and names the strongest probable cause; `execution
+  succeeded` means the replay succeeded where the network failed. After a
+  divergence the diagnostic rests on the network's result code alone, since
+  the replay's error may not be the network's. A replay that rests on inputs
+  it could not verify says so on the next line.
+
+| Code | Kind | When |
+|------|------|------|
+| `SRW1001` | `footprint_violation` | A storage error whose host diagnostic says the key is outside the footprint. A storage `ExceededLimit` without that evidence is `SRW1999`. |
+| `SRW1002` | `authorization` | An `auth` host error, including a custom account's `__check_auth` rejecting it. |
+| `SRW1003` | `budget_exceeded` | A `budget` `ExceededLimit` error, or the `resource_limit_exceeded` result. |
+| `SRW1004` | `contract_error` | The contract returned one of its own errors. |
+| `SRW1005` | `missing_storage` | A storage `MissingValue` error. |
+| `SRW1006` | `entry_archived` | The `entry_archived` result. |
+| `SRW1007` | `refundable_fee` | The `insufficient_refundable_fee` result. |
+| `SRW1999` | `unclassified` | Anything else; the host error is kept as it was reported. |
+
+A code never changes meaning; a new kind of failure gets a new code.
+
+`--trace` prints the narrative instead. It has a header, the findings, a
+verdict and a call tree. The rest shows up when it has something to say, or
+when you ask for more.
 
 | Section | What it tells you |
 |---------|-------------------|
@@ -157,8 +203,9 @@ it has something to say, or when you ask for more.
 
 Want more?
 
-- **`-v`** adds return values, the CPU and memory budget (local against the
-  limits, and what the network used) and the full footprint. Debug lines go to
+- **`-v`** prints the `--trace` narrative and adds return values, the CPU
+  and memory budget (local against the limits, and what the network used)
+  and the full footprint. Debug lines go to
   stderr, tagged by source: `[spec]`, `[replay]`, `[rpc]`, `[record]`.
 - **`-vv`** also dumps the raw on-chain and local diagnostic events and traces
   every RPC request and response (`[rpc]`, or `[fixture]` offline).
@@ -311,15 +358,16 @@ nothing else.
 | `--timeout <SECONDS>` | How long one RPC request may take before it is abandoned and retried (1 to 3600, default 30). `SOROREWIND_TIMEOUT` sets it from the environment. |
 | `--retries <N>` | How many times a failed RPC call is retried (0 to 10, default 3; `0` never retries). `SOROREWIND_RETRIES` sets it. |
 | `--deadline <SECONDS>` | How long the whole run may spend on the RPC, retries and waits included (1 to 86400; default none). A call still going then fails with `rpc_unreachable`. `SOROREWIND_DEADLINE` sets it. |
-| `--format <text\|json\|markdown\|html>` | How the report is written: the terminal narrative (`text`, default), the JSON document, Markdown for a GitHub issue or PR, or one self-contained HTML file. See [Sharing a report](#sharing-a-report). |
+| `--format <text\|json\|markdown\|html>` | How the report is written: the terminal diagnostic (`text`, default; `--trace` for the narrative), the JSON document, Markdown for a GitHub issue or PR, or one self-contained HTML file. See [Sharing a report](#sharing-a-report). |
 | `--what-if-protocol <N>` | Also replay with the other embedded host and compare its result, budget and events with the primary replay. |
 | `--stage <decode\|state\|replay>` | Stop after the selected stage and print its output in text or JSON. |
 | `--json` | Same as `--format json`. |
+| `--trace` | Print the narrative (findings, verdict, where it broke, the call tree) instead of the compact diagnostic. Text output only; `-v` implies it. |
 | `--wasm-debug <PATH>` | For a contract error, read the error names from a local WASM file instead of the ledger. |
 | `--color <auto\|always\|never>` | `auto` (default) colours a terminal and honours a non-empty `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb`. Use `always` in a pager: `sororewind … --color always \| less -R`. |
 | `--no-color` | Same as `--color never`. |
 | `--no-progress` | A live run prints the stage it is in on stderr (`sororewind: fetching the transaction…`) when stderr is a terminal. This turns it off; it is also off with `--json`, `-v` and `--fixture`. |
-| `-v, --verbose` | More detail; repeat for even more (`-vv`). |
+| `-v, --verbose` | The `--trace` narrative with more detail; repeat for even more (`-vv`). |
 | `--fixture <DIR>` | Replay offline from a recorded fixture. The hash is optional (the fixture knows it); a different one is an error. Not combinable with `--rpc-url`. |
 | `--completions <SHELL>` | Print a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`, e.g. `sororewind --completions fish > ~/.config/fish/completions/sororewind.fish`. |
 | `--man` | Print a man page, e.g. `sororewind --man > ~/.local/share/man/man1/sororewind.1`. |
@@ -382,6 +430,8 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 | `rpc` | Where the responses came from: scheme and host only (a path or query may hold an API key), or `fixture:<dir>`. |
 | `status` | Always `failed`: sororewind only replays failures. |
 | `findings` | What matters, most severe first, as `{ severity, summary, evidence }`, with optional catalog `guidance` (explanation, checks and a verification flag). `severity` is `error` (the transaction's own failure), `divergence` (the replay did not reproduce it; the summary names the probable cause), `warning` (an input may differ from what the transaction saw) or `limitation` (something could not be compared or reproduced). `evidence` lists the report fields it rests on, as paths into this document (`failure`, `probableCauses[0]`, `trust.caveats[2]`). The text report prints them at the top; `-v` adds the evidence. |
+| `diagnostic` | The primary failure, as the text output prints it but with identifiers whole: `{ code, severity, kind, message, location, details, cause, help, evidence }`. `code` and `kind` are from the table in [Reading the output](#reading-the-output); `severity` is `error`. `location` has the `contract` and `function` when known. `details` holds only the values relevant to the kind: always `result`, then `hostError` (`storage/ExceededLimit`), `key` and `keyContract`, `contractCode` and `errorName`, `causedBy` (`{ contractCode, name, function }`) or `hostMessage`. `cause` and `help` are catalog suggestions. `evidence.source` is `host_diagnostic` (the host error of a matching replay) or `result_code` (the network's result code alone); `outcomeReproduced` says whether the replay matched; `helpVerified` is always `false`; `footprintVerified` (footprint violations only) is `false`, since the key comes from the host's report and is not checked against the footprint. |
+| `replay` | The verdict in a line: `{ status, onChain, local, outcomeMatches, divergence }`. `status` is `trap_reproduced`, `failure_reproduced`, `execution_succeeded` or `replay_mismatch`. `outcomeMatches` compares the result codes only; the run can still diverge in its error, fee or events, which `status` and `divergence` report. |
 | `fidelity.match`, `fidelity.divergence` | Whether the replay matched, and if not, how it diverged: `result`, `error`, `fee` or `events`. |
 | `probableCauses` | On a divergence, the evidence that probably caused it, strongest first: `{ kind, subject, detail }` with `kind` one of `entry_drifted`, `setting_drifted`, `call_divergence`, `entry_ttl_drifted`, `entry_archived`, `entry_drift_unknown`, `setting_drift_unknown`, `entry_ext_missing`, `prng_seed_fixed`. Empty on a match, and when nothing points anywhere. |
 | `fee` | The non-refundable resource fee the network recorded and the one the replay computes, in stroops (`onchainNonRefundable`, `localNonRefundable`), plus the refundable fee and rent the network kept. |
@@ -395,7 +445,7 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 
 Enum-like values are lower `snake_case` everywhere (`"status": "failed"`,
 `"errorType": "wasm_vm"`, `"reason": "extended_since"`). Exit codes are the
-same as for the narrative, so a script can branch on the code and dig into the
+same as for the text output, so a script can branch on the code and dig into the
 document for details.
 
 Even when the replay can't run (exit `1`), `--json` still prints a document,
@@ -588,7 +638,8 @@ fetch ─► decode ─► reconstruct ─► replay ─► narrate ─► repor
 | Reconstruct | `state.rs`, `history.rs` | Rebuild ledger entries, TTLs, network settings and the ledger header; recover the value an entry had at the transaction from later ledger metadata. |
 | Replay | `replay.rs`, `host/` | Run the host for the ledger's protocol and compare its result with the network's. |
 | Narrate | `story.rs`, `spec.rs` | Turn diagnostic events into a call tree and a failure; read error names from the contract's spec. |
-| Report | `report.rs`, `render.rs` | Hold the outcome as data (the JSON schema), and print the narrative or the document. |
+| Diagnose | `findings.rs`, `catalog.rs`, `diagnostic.rs` | Rank the report's evidence, match known failures, and classify the primary failure under a stable `SRW` code. |
+| Report | `report.rs`, `render.rs` | Hold the outcome as data (the JSON schema), and print the compact diagnostic, the narrative or the document. |
 
 `src/host/` embeds one `soroban-env-host` per supported protocol (`p29.rs`,
 `p30.rs`). The host-facing code is written once, in `host/proto.rs`, and

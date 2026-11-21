@@ -1,0 +1,14 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1003]: Resource limit exceeded
+ --> CCQ2V…T47BD::__check_auth()
+
+  host     budget/ExceededLimit
+  message  escalating error to VM trap from failed host function call: verify_sig_ed25519
+  cause    The invocation exceeded a resource limit.
+  help     Check the budget section and diagnostic message for the resource that ran out.
+
+✓ replay: failure reproduced (resource limit exceeded) · testnet / ledger 5670060

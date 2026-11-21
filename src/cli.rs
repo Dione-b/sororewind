@@ -23,11 +23,13 @@ use crate::transport::{
     args_conflicts_with_subcommands = true,
     about = "Explain a failed Soroban transaction by replaying it locally",
     long_about = "sororewind fetches a failed Soroban transaction from an RPC, rebuilds the ledger \
-state it ran against, re-executes it with the same Soroban host, and prints a narrated call tree \
-up to the point of failure.",
+state it ran against, re-executes it with the same Soroban host, and reports the failure the way \
+a compiler reports an error: a stable code, where it happened and what to check. --trace prints \
+the narrated call tree up to the point of failure.",
     after_help = "EXAMPLES:\n  \
         sororewind 3f9a...c21\n  \
         sororewind 3f9a...c21 --network mainnet\n  \
+        sororewind 3f9a...c21 --trace\n  \
         sororewind 3f9a...c21 --json\n  \
         sororewind 3f9a...c21 --wasm-debug ./vault.wasm -v\n\n\
         EXIT CODES:\n  \
@@ -96,6 +98,11 @@ pub struct Cli {
     #[arg(long)]
     pub json: bool,
 
+    /// Print the full narrative (findings, fidelity, where it broke, the
+    /// call tree) instead of the compact diagnostic; text output only
+    #[arg(long)]
+    pub trace: bool,
+
     /// Read the contract's error names from this WASM file instead of the
     /// ledger (debugging aid)
     #[arg(long, value_name = "PATH", value_parser = parse_wasm_path)]
@@ -110,8 +117,9 @@ pub struct Cli {
     #[arg(long, conflicts_with = "color")]
     pub no_color: bool,
 
-    /// Repeat for more detail: -v adds budget and footprint detail, -vv adds
-    /// raw diagnostics and RPC tracing on stderr
+    /// Repeat for more detail: -v prints the --trace narrative with budget
+    /// and footprint detail and full identifiers, -vv adds raw diagnostics
+    /// and RPC tracing on stderr
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
@@ -619,6 +627,19 @@ mod tests {
         assert!(!shown(&["--fixture", "dir"], true));
         // A document to share is written to a file, so the stages still show.
         assert!(shown(&[HASH, "--format", "markdown"], true));
+    }
+
+    #[test]
+    fn the_compact_diagnostic_is_the_default_text() {
+        let detail = |args: &[&str]| {
+            let cli = parse(args).unwrap();
+            crate::render::Detail::from_flags(cli.verbose, cli.trace)
+        };
+        use crate::render::Detail;
+        assert_eq!(detail(&[HASH]), Detail::Compact);
+        assert_eq!(detail(&[HASH, "--trace"]), Detail::Summary);
+        assert_eq!(detail(&[HASH, "-v"]), Detail::Budget);
+        assert_eq!(detail(&[HASH, "--trace", "-vv"]), Detail::Diagnostics);
     }
 
     #[test]

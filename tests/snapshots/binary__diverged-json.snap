@@ -36,6 +36,23 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
     }
   ],
   "closeTime": 1794385548,
+  "diagnostic": {
+    "cause": "The network recorded a resource limit failure.",
+    "code": "SRW1003",
+    "details": {
+      "result": "resource_limit_exceeded"
+    },
+    "evidence": {
+      "helpVerified": false,
+      "outcomeReproduced": false,
+      "source": "result_code"
+    },
+    "help": "Check the declared limits against the CPU, memory and ledger-access diagnostics.",
+    "kind": "budget_exceeded",
+    "location": {},
+    "message": "Resource limit exceeded",
+    "severity": "error"
+  },
   "diagnostics": {
     "local": [
       "fail [-] fn_call, 0xd7928b72c2703ccf…(32 bytes), transfer [GB2YUAICRUQNAHAEAYDA7SS4SGQTECKKCU6PQ7BX32ZRX67VBH7MSCWC, GBZH7YHAQYRG3MQFKFZDOGIKEEYGZ6LJNCEHYOA7K7BDLJGLQI6R3RAG, 20000000000]",
@@ -177,6 +194,13 @@ expression: "format!(\"--- exit code: 2\\n{}\",\nserde_json::to_string_pretty(&p
   "prngSeed": "derived",
   "probableCauses": [],
   "protocol": 30,
+  "replay": {
+    "divergence": "result",
+    "local": "trapped",
+    "onChain": "resource_limit_exceeded",
+    "outcomeMatches": false,
+    "status": "replay_mismatch"
+  },
   "result": {
     "local": {
       "code": "trapped",

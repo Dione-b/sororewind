@@ -1,0 +1,16 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1002]: Authorization failed
+ --> CBBMQ…IBUCV::swap()
+
+  host     auth/ExistingValue
+  message  nonce already exists for address [GBOT3…CDPLR]
+  cause    The authorization check encountered an existing value, such as a consumed nonce.
+  help     Check the diagnostic message and the account's nonce, then compare with fresh simulation.
+
+✓ replay: trap reproduced · mainnet / ledger 65424472
+  ! the replay rests on 2 unverified inputs
+  --trace shows the call tree and the evidence

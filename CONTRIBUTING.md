@@ -51,7 +51,8 @@ Run `just` to see the other tasks.
 
 - `just test` is fully offline and takes a few seconds:
   - unit tests live next to the code;
-  - `tests/narrative.rs` replays every fixture and snapshots its narrative;
+  - `tests/narrative.rs` replays every fixture and snapshots its compact
+    diagnostic and its `--trace` narrative;
   - `tests/errors.rs` covers every error a user can hit;
   - `tests/scenarios.rs` covers situations no recording does.
 - When you change the output on purpose, the snapshot tests fail and write

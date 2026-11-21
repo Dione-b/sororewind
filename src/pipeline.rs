@@ -552,14 +552,17 @@ fn assemble(run: Replayed<'_>) -> Report {
         onchain_refundable: run.tx.onchain_fee.map(|fee| fee.refundable),
         onchain_rent: run.tx.onchain_fee.map(|fee| fee.rent),
     };
-    let findings = findings::derive(&findings::Inputs {
+    let inputs = findings::Inputs {
         fidelity: &run.fidelity,
         result: &result,
         failure: run.story.failure.as_ref(),
         fee: &fee,
         probable_causes: &probable_causes,
         trust: &trust,
-    });
+    };
+    let findings = findings::derive(&inputs);
+    let diagnostic = crate::diagnostic::derive(&inputs);
+    let replay = crate::diagnostic::replay(&inputs);
     Report {
         schema_version: SCHEMA_VERSION,
         what_if: run.what_if,
@@ -575,6 +578,8 @@ fn assemble(run: Replayed<'_>) -> Report {
         close_time: run.ledger.close_time,
         status: "failed",
         findings,
+        diagnostic,
+        replay,
         fidelity: run.fidelity,
         result,
         story: run.story,
