@@ -14,6 +14,8 @@ and can change between releases.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
 ### Changed
 
 - The default text output is a compact, compiler-style diagnostic: a stable
