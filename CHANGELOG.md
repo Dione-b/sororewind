@@ -14,6 +14,13 @@ and can change between releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--what-if-protocol 29` on a protocol-30 transaction no longer reports
+  `unavailable` with a budget `InternalError`: the cost types protocol 30
+  added, which the protocol-29 host cannot price, are left out of the
+  what-if run. The faithful replay is unchanged.
+
 ## [0.4.0] - 2026-11-21
 
 ### Changed

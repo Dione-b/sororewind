@@ -237,6 +237,9 @@ pub struct Host {
     pub protocol: u32,
     /// Its `soroban-env-host` version.
     pub version: &'static str,
+    /// How many `ContractCostType`s its cost model prices; a network's
+    /// `ContractCostParams` may not list more.
+    pub cost_types: usize,
     invoke: fn(&Invocation<'_>) -> std::result::Result<Output, Failure>,
     fees: fn(&FeeRequest) -> Fees,
 }
@@ -267,12 +270,14 @@ pub static HOSTS: [Host; 2] = [
     Host {
         protocol: p29::PROTOCOL,
         version: p29::VERSION,
+        cost_types: p29::COST_TYPES,
         invoke: p29::invoke,
         fees: p29::fees,
     },
     Host {
         protocol: p30::PROTOCOL,
         version: p30::VERSION,
+        cost_types: p30::COST_TYPES,
         invoke: p30::invoke,
         fees: p30::fees,
     },

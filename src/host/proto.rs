@@ -17,8 +17,8 @@ use super::soroban_env_host::{
     storage::Storage,
     vm::VersionedContractCodeCostInputs,
     xdr::{
-        ContractCodeCostInputs, ContractCostParams, Hash, LedgerEntry, Limits, ReadXdr, ScError,
-        ScErrorCode, ScErrorType, WriteXdr,
+        ContractCodeCostInputs, ContractCostParams, ContractCostType, Hash, LedgerEntry, Limits,
+        ReadXdr, ScError, ScErrorCode, ScErrorType, WriteXdr,
     },
 };
 use crate::host::{Change, Failure, FeeRequest, Fees, Invocation, Output, RentChange};
@@ -28,6 +28,9 @@ pub const PROTOCOL: u32 = super::soroban_env_host::meta::INTERFACE_VERSION.proto
 
 /// This host's `soroban-env-host` version.
 pub const VERSION: &str = super::soroban_env_host::VERSION.pkg;
+
+/// How many cost types this host's budget prices.
+pub const COST_TYPES: usize = ContractCostType::VARIANTS.len();
 
 fn xdr(e: impl std::fmt::Display) -> Failure {
     Failure::Xdr(e.to_string())
