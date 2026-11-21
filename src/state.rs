@@ -77,10 +77,13 @@
 //!   entry is, and the report says the liveness was inferred.
 //! - an entry listed for restoration that is live now with a TTL a
 //!   restoration at or after the transaction's ledger would have produced
-//!   (`liveUntil >= ledger + minPersistentTTL - 1`): the transaction failed,
-//!   so it restored nothing, and something else has restored the entry since.
-//!   It is replayed as archived-and-restored. A smaller TTL can only have
-//!   been set before the transaction, so that entry was live.
+//!   (`liveUntil >= ledger + minPersistentTTL - 1`): either something else
+//!   restored it after the (failed) transaction, or an extension made before
+//!   the transaction already reached that far, since `maxEntryTTL` allows it.
+//!   The data cannot tell the two apart, so its liveness is unproven. It is
+//!   replayed as live, like an entry extended since, because core does not
+//!   restore a live entry it was asked to restore. A smaller TTL can only
+//!   have been set before the transaction, so that entry was live.
 //!
 //! An entry ledger metadata shows was restored after the transaction, before
 //! any other change to it or its TTL, is judged like one archived now
@@ -410,9 +413,9 @@ pub enum TtlDrift {
     /// Archived since (and possibly restored again), but demonstrably live
     /// when the transaction ran.
     ArchivedSince,
-    /// Listed for restoration by the transaction, and restored by something
-    /// else since.
-    RestoredSince,
+    /// Listed for restoration by the transaction, and live now with a TTL
+    /// that a later restoration or an earlier extension both explain.
+    RestoredOrExtendedSince,
 }
 
 /// The facts liveness is decided against.
@@ -471,10 +474,15 @@ impl LivenessRule {
                 return (Liveness::Live { live_until }, None);
             }
             // The transaction failed and restored nothing, yet the entry it
-            // listed is live with a TTL only a later restoration (or an
-            // extension on top of one) explains.
+            // listed is live with a TTL a later restoration would set. An
+            // extension before the transaction can reach as far, and then the
+            // entry was live and core did not restore it. Replayed as live,
+            // flagged as unproven.
             if restorable && durability == Persistent && live_until >= self.restored_until() {
-                return (restored, Some(TtlDrift::RestoredSince));
+                return (
+                    Liveness::Live { live_until },
+                    Some(TtlDrift::RestoredOrExtendedSince),
+                );
             }
             let furthest_possible = self
                 .tx_ledger
@@ -1022,16 +1030,14 @@ mod tests {
                 None
             )
         );
-        // From there on, a later restoration explains it: the transaction
-        // failed, so it was not this one.
+        // From there on, a later restoration or an earlier extension
+        // explains it: replayed as live, with the liveness unproven.
         for live_until in [TX_LEDGER + 99, TX_LEDGER + 400, TX_LEDGER + 9_000] {
             assert_eq!(
                 classify(Persistent, live_until, true),
                 (
-                    Liveness::Restored {
-                        live_until: TX_LEDGER + 99
-                    },
-                    Some(TtlDrift::RestoredSince)
+                    Liveness::Live { live_until },
+                    Some(TtlDrift::RestoredOrExtendedSince)
                 )
             );
         }

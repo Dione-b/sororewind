@@ -14,6 +14,19 @@ and can change between releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- An entry the transaction listed for restoration that is live now, with a
+  TTL at least what a restoration in the transaction's ledger would set, is
+  no longer assumed to have been archived then and restored since: an
+  extension before the transaction explains the same TTL. It is replayed as
+  live, as core does not restore a live entry, and reported in
+  `footprint.ttlDrifted` with the new reason `restored_or_extended_since`.
+  This turned some `ENTRY_ARCHIVED` transactions into false divergences:
+  the replay charged the entry as a disk read and failed on the read limit
+  before reaching the archived entry the network refused. `restored_since`
+  is no longer reported.
+
 ## [0.4.1] - 2026-11-21
 
 ### Fixed

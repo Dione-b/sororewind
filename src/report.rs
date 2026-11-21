@@ -358,9 +358,14 @@ pub enum TtlDriftReason {
     ExtendedSince,
     /// The entry was live for the transaction and has been archived since.
     ArchivedSince,
-    /// The transaction listed the entry for restoration; something else has
-    /// restored it since.
+    /// No longer reported: an entry it was used for is now reported as
+    /// `RestoredOrExtendedSince`.
     RestoredSince,
+    /// The transaction listed the entry for restoration, and it is live now
+    /// with a TTL that a restoration after the transaction or an extension
+    /// before it both explain; its liveness then is unproven, and it was
+    /// replayed as live.
+    RestoredOrExtendedSince,
 }
 
 impl TtlDriftReason {
@@ -370,6 +375,7 @@ impl TtlDriftReason {
             TtlDriftReason::ExtendedSince => "TTL extended since",
             TtlDriftReason::ArchivedSince => "archived since",
             TtlDriftReason::RestoredSince => "restored since",
+            TtlDriftReason::RestoredOrExtendedSince => "restored or TTL extended since",
         }
     }
 }
@@ -379,7 +385,7 @@ impl From<TtlDrift> for TtlDriftReason {
         match drift {
             TtlDrift::ExtendedSince => TtlDriftReason::ExtendedSince,
             TtlDrift::ArchivedSince => TtlDriftReason::ArchivedSince,
-            TtlDrift::RestoredSince => TtlDriftReason::RestoredSince,
+            TtlDrift::RestoredOrExtendedSince => TtlDriftReason::RestoredOrExtendedSince,
         }
     }
 }
