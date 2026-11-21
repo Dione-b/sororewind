@@ -1,0 +1,13 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1004]: Contract returned an error
+ --> CCUHQ…OC6VO::execute()
+
+  error  Limit (#17)
+  cause  The contract returned an application-defined error.
+  help   Check the named error in the contract spec and the innermost failing call's inputs.
+
+✓ replay: trap reproduced · testnet / ledger 5678938

@@ -1,0 +1,13 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1004]: Contract returned an error
+ --> CDLZF…GCYSC::transfer()
+
+  error  BalanceError (#10)
+  cause  The transfer would put an account balance outside the token's permitted range.
+  help   Compare the attempted amount with the available balance and any account limits.
+
+✓ replay: trap reproduced · testnet / ledger 5672381

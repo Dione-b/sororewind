@@ -14,6 +14,27 @@ and can change between releases.
 
 ## [Unreleased]
 
+### Changed
+
+- The default text output is a compact, compiler-style diagnostic: a stable
+  code, the contract and function, the values relevant to the failure, one
+  catalog suggestion, and the replay's verdict (`✓ replay: trap reproduced`).
+  The previous narrative is printed with `--trace`; `-v` and `-vv` still
+  print it with more detail. Markdown, HTML and JSON output and the exit
+  codes are unchanged.
+
+### Added
+
+- `--trace` prints the narrative: findings, verdict, where it broke and the
+  call tree.
+- Diagnostic codes `SRW1001`–`SRW1007` and `SRW1999` classify the primary
+  failure from structured host and result data (README "Reading the output").
+- JSON adds `diagnostic` (code, kind, location, details, catalog cause and
+  help, and the evidence it rests on) and `replay` (status, result codes,
+  `outcomeMatches`). Additive: `schemaVersion` stays `1`.
+- `render::Detail::Compact` and `Detail::from_flags`; the new `diagnostic`
+  module holds the diagnostic types.
+
 ## [0.3.0] - 2026-11-19
 
 ### Added

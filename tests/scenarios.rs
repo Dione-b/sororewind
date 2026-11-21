@@ -564,6 +564,21 @@ async fn events_the_network_never_recorded_are_a_divergence() {
     // Nothing the run knows of changed, and the report says so rather than
     // guessing.
     assert!(report.probable_causes.is_empty());
+    // Same result code, but the replay is not called reproduced, and the
+    // diagnostic falls back to the network's result code.
+    use sororewind::diagnostic::{EvidenceSource, ReplayStatus};
+    assert!(report.replay.outcome_matches);
+    assert_eq!(report.replay.status, ReplayStatus::ReplayMismatch);
+    assert_eq!(
+        report.diagnostic.evidence.source,
+        EvidenceSource::ResultCode
+    );
+    assert!(!report.diagnostic.evidence.outcome_reproduced);
+    let compact = sororewind::render::human(&report, false, sororewind::render::Detail::Compact);
+    assert!(
+        compact.contains("✗ replay: replay mismatch (events)"),
+        "{compact}"
+    );
     let text = sororewind::render::human(&report, false, sororewind::render::Detail::Summary);
     assert!(text.contains("same result, different events"), "{text}");
     assert!(

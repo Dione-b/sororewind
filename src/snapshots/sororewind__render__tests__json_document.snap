@@ -21,6 +21,35 @@ expression: json(&sample_report()).unwrap()
       ]
     }
   ],
+  "diagnostic": {
+    "code": "SRW1004",
+    "severity": "error",
+    "kind": "contract_error",
+    "message": "Contract returned an error",
+    "location": {
+      "contract": "CAFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUTSM",
+      "function": "inner"
+    },
+    "details": {
+      "result": "trapped",
+      "hostError": "contract",
+      "contractCode": 3,
+      "errorName": "InsufficientBalance"
+    },
+    "cause": "The contract returned an application-defined error.",
+    "help": "Check the named error in the contract spec and the innermost failing call's inputs.",
+    "evidence": {
+      "source": "host_diagnostic",
+      "outcomeReproduced": true,
+      "helpVerified": false
+    }
+  },
+  "replay": {
+    "status": "trap_reproduced",
+    "onChain": "trapped",
+    "local": "trapped",
+    "outcomeMatches": true
+  },
   "fidelity": {
     "match": true,
     "divergence": null

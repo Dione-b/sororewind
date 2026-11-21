@@ -145,7 +145,7 @@ async fn main() -> ExitCode {
     let code = sororewind::exit_code(&result);
     let format = cli.output_format();
     let printed = result.and_then(|report| {
-        let detail = Detail::from_verbosity(cli.verbose);
+        let detail = Detail::from_flags(cli.verbose, cli.trace);
         let color = render::use_color(cli.color_choice(), &render::ColorEnv::current());
         let text = render::report(&report, format, color, detail)
             .map_err(|e| sororewind::RewindError::Output(e.to_string()))?;

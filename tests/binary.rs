@@ -50,11 +50,25 @@ fn stderr(out: &Output) -> String {
 }
 
 #[test]
-fn a_match_exits_0_with_the_narrative_on_stdout() {
+fn a_match_exits_0_with_the_diagnostic_on_stdout() {
     let out = sororewind(&["--fixture", &fixture()]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(stdout(&out).contains("replay matches network"));
+    let text = stdout(&out);
+    assert!(text.starts_with("error[SRW1004]: "), "{text}");
+    assert!(text.contains("✓ replay: trap reproduced"), "{text}");
+    // The compact view leaves the narrative to --trace.
+    assert!(!text.lines().any(|line| line == "call tree"), "{text}");
+    assert!(text.lines().count() <= 10, "{text}");
     assert!(out.stderr.is_empty(), "{}", stderr(&out));
+
+    let out = sororewind(&["--fixture", &fixture(), "--trace"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout(&out);
+    assert!(text.contains("replay matches network"), "{text}");
+    assert!(text.contains("call tree"), "{text}");
+    // -v is the trace with more detail.
+    let verbose = stdout(&sororewind(&["--fixture", &fixture(), "-v"]));
+    assert!(verbose.contains("call tree"), "{verbose}");
 
     let out = sororewind(&["--fixture", &fixture(), "--json"]);
     assert_eq!(out.status.code(), Some(0));
@@ -108,6 +122,18 @@ fn a_divergence_exits_2_and_still_prints_the_report() {
     let out = sororewind(&["--fixture", &path]);
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     let text = stdout(&out);
+    assert!(
+        text.contains("✗ replay: replay mismatch (result)"),
+        "{text}"
+    );
+    insta::assert_snapshot!(
+        "diverged-compact",
+        format!("--- exit code: 2\n{text}").replace(&path, "<fixture>")
+    );
+
+    let out = sororewind(&["--fixture", &path, "--trace"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let text = stdout(&out);
     assert!(text.contains("replay diverged from the network"), "{text}");
     // A divergence shows the footprint without being asked.
     assert!(text.contains("footprint "), "{text}");
@@ -124,6 +150,11 @@ fn a_divergence_exits_2_and_still_prints_the_report() {
     assert_eq!(json["fidelity"]["match"], false);
     assert_eq!(json["fidelity"]["divergence"], "result");
     assert_eq!(json["probableCauses"], serde_json::json!([]));
+    // The replay's error is not the network's: only the result code is used.
+    assert_eq!(json["diagnostic"]["code"], "SRW1003");
+    assert_eq!(json["diagnostic"]["evidence"]["source"], "result_code");
+    assert_eq!(json["replay"]["status"], "replay_mismatch");
+    assert_eq!(json["replay"]["outcomeMatches"], false);
     let mut pinned = json.clone();
     // `rpc` names the temporary fixture directory.
     pinned["rpc"] = "<fixture>".into();
@@ -134,6 +165,42 @@ fn a_divergence_exits_2_and_still_prints_the_report() {
             serde_json::to_string_pretty(&pinned).unwrap()
         )
     );
+}
+
+#[test]
+fn json_is_one_ansi_free_document_with_the_diagnostic() {
+    // Colour forced on: it applies to the text output only.
+    let out = sororewind(&["--fixture", &fixture(), "--json", "--color", "always"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout(&out);
+    assert!(!text.contains('\u{1b}'), "{text}");
+    // Exactly one document: a stream of JSON values has nothing after it.
+    let mut documents = serde_json::Deserializer::from_str(&text).into_iter::<Value>();
+    let json = documents.next().unwrap().unwrap();
+    assert!(documents.next().is_none(), "{text}");
+
+    let diagnostic = &json["diagnostic"];
+    for field in [
+        "code", "severity", "kind", "message", "location", "details", "evidence",
+    ] {
+        assert!(
+            !diagnostic[field].is_null(),
+            "diagnostic.{field}: {diagnostic}"
+        );
+    }
+    assert_eq!(diagnostic["code"], "SRW1004");
+    assert_eq!(diagnostic["severity"], "error");
+    assert_eq!(diagnostic["kind"], "contract_error");
+    // Identifiers are never abbreviated in JSON.
+    let contract = diagnostic["location"]["contract"].as_str().unwrap();
+    assert_eq!(contract.len(), 56, "{contract}");
+    assert_eq!(diagnostic["location"]["function"], "transfer");
+    assert_eq!(diagnostic["evidence"]["source"], "host_diagnostic");
+    assert_eq!(diagnostic["evidence"]["helpVerified"], false);
+    assert_eq!(json["replay"]["status"], "trap_reproduced");
+    assert_eq!(json["replay"]["onChain"], "trapped");
+    assert_eq!(json["replay"]["local"], "trapped");
+    assert_eq!(json["replay"]["outcomeMatches"], true);
 }
 
 #[test]

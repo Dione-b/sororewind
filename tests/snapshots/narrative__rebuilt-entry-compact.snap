@@ -1,0 +1,13 @@
+---
+source: tests/narrative.rs
+expression: "common::transcript(&result, &compact)"
+---
+--- exit code: 0
+error[SRW1001]: Undeclared storage access
+ --> CD4KF…GXOPW::write_prices()
+
+  key    "BTC"
+  cause  The contract accessed a ledger key outside the declared transaction footprint.
+  help   Check the key in the diagnostic against the simulated read-only and read-write footprint.
+
+✓ replay: trap reproduced · testnet / ledger 5679032

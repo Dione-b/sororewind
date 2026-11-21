@@ -1,6 +1,7 @@
 //! render: turn a completed replay into something a person can read.
 //!
-//! Two renderers over the same [`Report`]: a human narrative and a JSON
+//! Two renderers over the same [`Report`]: human text — by default a
+//! compiler-style diagnostic, with `--trace` the full narrative — and a JSON
 //! document. Colour is applied here and nowhere else — and only to the
 //! narrative on stdout; anything on stderr is plain.
 
@@ -9,15 +10,20 @@ use std::io::IsTerminal;
 
 use owo_colors::OwoColorize;
 
+use crate::diagnostic::{Code, Diagnostic, EvidenceSource, ReplayStatus};
 use crate::findings::Severity;
 use crate::replay::{Divergence, PrngSeed};
 use crate::report::Report;
 use crate::story::{Call, Failure};
 
-/// How much of the report the narrative shows. Derived from `-v`.
+/// How much of the report the text shows. Derived from `--trace` and `-v`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Detail {
-    /// Fidelity, the failure and the call tree.
+    /// The primary diagnostic and the replay's verdict, compiler-style: the
+    /// default.
+    Compact,
+    /// The narrative: findings, fidelity, the failure and the call tree
+    /// (`--trace`).
     Summary,
     /// Adds return values, budget and footprint detail (`-v`).
     Budget,
@@ -26,13 +32,23 @@ pub enum Detail {
 }
 
 impl Detail {
-    /// Map the number of `-v` flags to a level; more than two means
-    /// [`Detail::Diagnostics`].
+    /// Map the number of `-v` flags to a level of the narrative; more than
+    /// two means [`Detail::Diagnostics`].
     pub fn from_verbosity(verbose: u8) -> Detail {
         match verbose {
             0 => Detail::Summary,
             1 => Detail::Budget,
             _ => Detail::Diagnostics,
+        }
+    }
+
+    /// The level the command line asks for: [`Detail::Compact`] unless
+    /// `--trace` or `-v` asks for the narrative; `-v` implies the trace.
+    pub fn from_flags(verbose: u8, trace: bool) -> Detail {
+        if verbose == 0 && !trace {
+            Detail::Compact
+        } else {
+            Detail::from_verbosity(verbose)
         }
     }
 }
@@ -214,11 +230,259 @@ pub fn json_error(error: &crate::RewindError) -> String {
     serde_json::to_string_pretty(&document).unwrap_or_default()
 }
 
-/// The human narrative.
+/// The human text: the compact diagnostic at [`Detail::Compact`], the
+/// narrative otherwise.
 pub fn human(report: &Report, color: bool, detail: Detail) -> String {
     let mut out = String::new();
+    let p = Palette { on: color };
     // Writing into a `String` cannot fail.
-    let _ = write_human(&mut out, report, &Palette { on: color }, detail);
+    let _ = if detail == Detail::Compact {
+        write_compact(&mut out, report, &p)
+    } else {
+        write_human(&mut out, report, &p, detail)
+    };
+    out
+}
+
+/// The primary diagnostic, the way a compiler reports an error, then the
+/// replay's verdict. Everything comes from [`Report::diagnostic`] and
+/// [`Report::replay`]; identifiers are shortened here and only here.
+fn write_compact(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
+    let diagnostic = &report.diagnostic;
+    writeln!(
+        out,
+        "{}{}",
+        p.red(&p.bold(&format!("error[{}]", diagnostic.code.as_str()))),
+        p.bold(&format!(": {}", diagnostic.message))
+    )?;
+    let location = &diagnostic.location;
+    let place = match (&location.contract, &location.function) {
+        (Some(contract), Some(function)) => {
+            Some(format!("{}::{}()", abbreviate(contract), safe(function)))
+        }
+        (Some(contract), None) => Some(abbreviate(contract)),
+        (None, Some(function)) => Some(format!("{}()", safe(function))),
+        (None, None) => None,
+    };
+    if let Some(place) = place {
+        writeln!(out, " {} {}", p.cyan("-->"), place)?;
+    }
+    let fields = compact_fields(diagnostic);
+    if !fields.is_empty() {
+        writeln!(out)?;
+        let width = fields
+            .iter()
+            .map(|(label, _)| label.len())
+            .max()
+            .unwrap_or(0);
+        for (label, value) in &fields {
+            writeln!(out, "  {}  {value}", p.bold(&format!("{label:<width$}")))?;
+        }
+    }
+    writeln!(out)?;
+    replay_line(out, report, p)?;
+    if let Some(what_if) = &report.what_if {
+        writeln!(
+            out,
+            "{}",
+            p.dim(&format!(
+                "  what-if protocol {} (non-faithful): {}",
+                what_if.protocol,
+                what_if_lines(report, what_if)
+                    .first()
+                    .map_or(String::new(), |line| safe(line))
+            ))
+        )?;
+    }
+    Ok(())
+}
+
+/// The labelled lines under the location: only those the diagnostic's kind
+/// and evidence support, in the order a reader needs them.
+fn compact_fields(diagnostic: &Diagnostic) -> Vec<(&'static str, String)> {
+    let details = &diagnostic.details;
+    let mut fields = Vec::new();
+    if diagnostic.evidence.source == EvidenceSource::ResultCode {
+        fields.push(("result", details.result.replace('_', " ")));
+    }
+    match diagnostic.code {
+        Code::FootprintViolation => {
+            if let Some(key) = &details.key {
+                fields.push(("key", abbreviate_ids(&safe(key))));
+            }
+            // The key's owner, when it is not the contract that failed.
+            if let Some(owner) = details
+                .key_contract
+                .as_ref()
+                .filter(|owner| diagnostic.location.contract.as_ref() != Some(*owner))
+            {
+                fields.push(("owner", abbreviate(owner)));
+            }
+        }
+        Code::ContractError => {
+            if let Some(code) = details.contract_code {
+                fields.push((
+                    "error",
+                    match &details.error_name {
+                        Some(name) => format!("{} (#{code})", safe(name)),
+                        None => format!("contract error #{code}"),
+                    },
+                ));
+            }
+        }
+        _ => {
+            if let Some(cause) = &details.caused_by {
+                let name = cause
+                    .name
+                    .as_ref()
+                    .map_or(String::new(), |name| format!("{} ", safe(name)));
+                let place = cause
+                    .function
+                    .as_ref()
+                    .map_or(String::new(), |function| format!(" in {}", safe(function)));
+                fields.push((
+                    "rejected",
+                    format!("{name}(#{}){place}", cause.contract_code),
+                ));
+            }
+            if let Some(host_error) = &details.host_error {
+                fields.push(("host", safe(host_error)));
+            }
+            if let Some(message) = &details.host_message {
+                fields.push(("message", abbreviate_ids(&safe(message))));
+            }
+        }
+    }
+    if let Some(cause) = diagnostic.cause {
+        fields.push(("cause", cause.to_string()));
+    }
+    if let Some(help) = diagnostic.help {
+        fields.push(("help", help.to_string()));
+    }
+    fields
+}
+
+/// `✓ replay: trap reproduced · testnet / ledger 5853270`, and on a
+/// divergence what differed and its strongest probable cause.
+fn replay_line(out: &mut impl Write, report: &Report, p: &Palette) -> fmt::Result {
+    let replay = &report.replay;
+    let place = p.dim(&format!(
+        " · {} / ledger {}",
+        safe(&report.network),
+        report.ledger
+    ));
+    let words = |code: &str| code.replace('_', " ");
+    match replay.status {
+        ReplayStatus::TrapReproduced => {
+            writeln!(out, "{}{place}", p.green("✓ replay: trap reproduced"))?;
+        }
+        ReplayStatus::FailureReproduced => writeln!(
+            out,
+            "{}{place}",
+            p.green(&format!(
+                "✓ replay: failure reproduced ({})",
+                words(replay.local)
+            ))
+        )?,
+        ReplayStatus::ExecutionSucceeded | ReplayStatus::ReplayMismatch => {
+            let what = replay.divergence.map_or(String::new(), |divergence| {
+                format!(" ({})", divergence_name(divergence))
+            });
+            writeln!(
+                out,
+                "{}{place}",
+                p.red(&format!(
+                    "✗ replay: {}{what} · on-chain {} / local {}",
+                    replay.status.label(),
+                    words(replay.on_chain),
+                    words(replay.local)
+                ))
+            )?;
+        }
+    }
+    // Probable causes only explain a divergence.
+    let cause = report
+        .probable_causes
+        .first()
+        .filter(|_| !report.fidelity.matches);
+    if let Some(cause) = cause {
+        writeln!(
+            out,
+            "  {}  {} {}",
+            p.bold("probable"),
+            abbreviate_ids(&safe(&cause.subject)),
+            p.dim(&format!("— {}", cause.detail))
+        )?;
+    }
+    if !report.trust.verified {
+        let count = report.trust.caveats.len();
+        writeln!(
+            out,
+            "  {}",
+            p.yellow(&format!(
+                "! the replay rests on {count} unverified input{}",
+                if count == 1 { "" } else { "s" }
+            ))
+        )?;
+    }
+    if !report.fidelity.matches || !report.trust.verified {
+        writeln!(
+            out,
+            "  {}",
+            p.dim("--trace shows the call tree and the evidence")
+        )?;
+    }
+    Ok(())
+}
+
+fn divergence_name(divergence: Divergence) -> &'static str {
+    match divergence {
+        Divergence::Result => "result",
+        Divergence::Error => "error",
+        Divergence::Fee => "fee",
+        Divergence::Events => "events",
+    }
+}
+
+/// `CBLLS…ZSMCM`: the first and last five characters of a strkey, enough to
+/// recognise it in the compact view. Shorter strings are kept.
+fn abbreviate(strkey: &str) -> String {
+    const KEEP: usize = 5;
+    let length = strkey.chars().count();
+    if length <= 2 * KEEP + 1 {
+        return safe(strkey);
+    }
+    let first: String = strkey.chars().take(KEEP).collect();
+    let last: String = strkey.chars().skip(length - KEEP).collect();
+    safe(&format!("{first}…{last}"))
+}
+
+/// `text` with every account, contract or muxed strkey in it abbreviated.
+fn abbreviate_ids(text: &str) -> String {
+    let is_strkey = |word: &str| {
+        matches!(word.len(), 56 | 69)
+            && word.starts_with(['G', 'C', 'M'])
+            && word
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b))
+    };
+    let mut out = String::new();
+    let mut word = String::new();
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_alphanumeric() {
+            word.push(c);
+            continue;
+        }
+        if is_strkey(&word) {
+            out.push_str(&abbreviate(&word));
+        } else {
+            out.push_str(&word);
+        }
+        word.clear();
+        out.push(c);
+    }
+    // The sentinel space.
+    out.pop();
     out
 }
 
@@ -1265,5 +1529,78 @@ mod tests {
     #[test]
     fn json_document() {
         insta::assert_snapshot!("json_document", json(&sample_report()).unwrap());
+    }
+
+    #[test]
+    fn the_compact_view_comes_from_the_diagnostic() {
+        let report = sample_report();
+        let text = human(&report, false, Detail::Compact);
+        insta::assert_snapshot!("compact", text);
+        assert!(!text.lines().any(|line| line == "call tree"), "{text}");
+        // Colour only when asked for.
+        assert!(!text.contains('\u{1b}'));
+        assert!(human(&report, true, Detail::Compact).contains('\u{1b}'));
+    }
+
+    #[test]
+    fn the_compact_view_survives_missing_metadata() {
+        let mut report = sample_report();
+        report.diagnostic.location = crate::diagnostic::Location::default();
+        report.diagnostic.details = crate::diagnostic::Details {
+            result: "trapped",
+            ..Default::default()
+        };
+        report.diagnostic.cause = None;
+        report.diagnostic.help = None;
+        let text = human(&report, false, Detail::Compact);
+        assert!(!text.contains("-->"), "{text}");
+        assert!(
+            text.starts_with("error[SRW1004]: Contract returned an error\n"),
+            "{text}"
+        );
+        assert!(text.contains("✓ replay: trap reproduced"), "{text}");
+    }
+
+    #[test]
+    fn the_compact_view_says_how_a_replay_diverged() {
+        let mut report = sample_report();
+        report.fidelity = Fidelity::diverged(Divergence::Events);
+        report.replay.status = ReplayStatus::ReplayMismatch;
+        report.replay.divergence = Some(Divergence::Events);
+        report.probable_causes = vec![crate::culprit::Culprit {
+            kind: crate::culprit::CulpritKind::EntryDrifted,
+            subject: format!("account G{}", "A".repeat(55)),
+            detail: "changed after the transaction ran".to_string(),
+        }];
+        let text = human(&report, false, Detail::Compact);
+        assert!(
+            text.contains("✗ replay: replay mismatch (events) · on-chain trapped / local trapped"),
+            "{text}"
+        );
+        assert!(
+            text.contains("probable  account GAAAA…AAAAA — changed after the transaction ran"),
+            "{text}"
+        );
+        assert!(text.contains("--trace shows"), "{text}");
+    }
+
+    #[test]
+    fn strkeys_are_abbreviated_only_in_text() {
+        let account = format!("G{}", "B".repeat(55));
+        assert_eq!(abbreviate(&account), "GBBBB…BBBBB");
+        assert_eq!(abbreviate("CABC"), "CABC");
+        assert_eq!(
+            abbreviate_ids(&format!("[UserRewardState, {account}]")),
+            "[UserRewardState, GBBBB…BBBBB]"
+        );
+        // Not a strkey: lowercase, wrong length, wrong alphabet.
+        for word in [
+            "withdraw_position",
+            "GABC",
+            &"g".repeat(56),
+            &"G1".repeat(28),
+        ] {
+            assert_eq!(abbreviate_ids(word), word);
+        }
     }
 }

@@ -10,6 +10,7 @@ use serde::Serialize;
 use stellar_xdr::InvokeHostFunctionResult;
 
 use crate::culprit::Culprit;
+use crate::diagnostic::{Diagnostic, Replay};
 use crate::display;
 use crate::findings::Finding;
 use crate::hash::TxHash;
@@ -52,6 +53,13 @@ pub struct Report {
     /// limitations), each with the fields it rests on. Derived from the
     /// sections below.
     pub findings: Vec<Finding>,
+    /// The primary failure, compiler-style: a stable code, where it happened,
+    /// the values that identify it and one thing to check. Derived from the
+    /// sections below.
+    pub diagnostic: Diagnostic,
+    /// The replay's verdict in a line: whether it reproduced the network's
+    /// outcome, phrased no stronger than what was compared.
+    pub replay: Replay,
     /// Whether the replay reproduced the network's outcome.
     pub fidelity: Fidelity,
     /// The network's recorded result and the replay's.

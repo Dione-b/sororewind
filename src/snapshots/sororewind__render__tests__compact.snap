@@ -1,0 +1,12 @@
+---
+source: src/render.rs
+expression: text
+---
+error[SRW1004]: Contract returned an error
+ --> CAFAU…AUTSM::inner()
+
+  error  InsufficientBalance (#3)
+  cause  The contract returned an application-defined error.
+  help   Check the named error in the contract spec and the innermost failing call's inputs.
+
+✓ replay: trap reproduced · testnet / ledger 1000
