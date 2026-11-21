@@ -1,9 +1,9 @@
 [package]
 name = "sororewind"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Replay failed Soroban transactions locally and diagnose failures with a narrated call tree"
+description = "Replay failed Soroban transactions locally and diagnose failures with compiler-style diagnostics and a narrated call tree"
 license = "Apache-2.0"
 repository = "https://github.com/Dione-b/sororewind"
 homepage = "https://github.com/Dione-b/sororewind"
