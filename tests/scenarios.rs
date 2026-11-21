@@ -9,6 +9,7 @@
 mod common;
 
 use serde_json::Value;
+use sororewind::TtlDriftReason;
 use sororewind::codec;
 use sororewind::culprit::CulpritKind;
 use sororewind::replay::Divergence;
@@ -21,8 +22,9 @@ use stellar_xdr::{
     ContractDataDurability, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionExt,
     FeeBumpTransactionInnerTx, Hash, InnerTransactionResult, InnerTransactionResultExt,
     InnerTransactionResultPair, InnerTransactionResultResult, InvokeHostFunctionResult, LedgerKey,
-    Limits, MuxedAccount, OperationResult, OperationResultTr, TransactionEnvelope,
-    TransactionResult, TransactionResultExt, TransactionResultResult, Uint256, WriteXdr,
+    Limits, MuxedAccount, OperationResult, OperationResultTr, SorobanResourcesExtV0,
+    SorobanTransactionDataExt, TransactionEnvelope, TransactionResult, TransactionResultExt,
+    TransactionResultResult, Uint256, WriteXdr,
 };
 
 use common::Overlay;
@@ -311,6 +313,72 @@ async fn an_entry_archived_since_the_transaction_is_ttl_drift() {
     assert_eq!(report.outcome(), Outcome::Matched);
     assert!(report.footprint.archived.is_empty());
     assert_eq!(report.footprint.ttl_drifted.len(), 1);
+}
+
+#[tokio::test]
+async fn a_listed_entry_live_now_with_a_restoration_ttl_is_unproven() {
+    // The transaction lists a read-write entry for restoration, and the
+    // entry is live now with a TTL only a restoration after the transaction
+    // or an extension before it explains. Core does not restore a live
+    // entry, so it is replayed as live, and its liveness is reported as
+    // unproven rather than assumed archived.
+    const FIXTURE: &str = "nested-contract-error";
+    let path = std::fs::read_dir(common::fixture_dir(FIXTURE))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_str().unwrap().contains("getTransaction"))
+        .unwrap();
+    let response: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let ledger = response["result"]["ledger"].as_u64().unwrap();
+    let envelope: TransactionEnvelope = codec::decode(
+        response["result"]["envelopeXdr"].as_str().unwrap(),
+        "envelopeXdr",
+    )
+    .unwrap();
+    let TransactionEnvelope::Tx(envelope) = envelope else {
+        panic!("the fixture's envelope is not a v1 transaction");
+    };
+    let TransactionExt::V1(data) = &envelope.tx.ext else {
+        panic!("the fixture's transaction carries no Soroban data");
+    };
+    let listed = b64(&data.resources.footprint.read_write[0]);
+
+    let request = common::request(FIXTURE).await;
+    let overlay = Overlay::on(FIXTURE)
+        .await
+        .rewrite_result("getTransaction", |result| {
+            let envelope: TransactionEnvelope =
+                codec::decode(result["envelopeXdr"].as_str().unwrap(), "envelopeXdr").unwrap();
+            let TransactionEnvelope::Tx(mut envelope) = envelope else {
+                panic!("the fixture's envelope is not a v1 transaction");
+            };
+            let TransactionExt::V1(data) = &mut envelope.tx.ext else {
+                panic!("the fixture's transaction carries no Soroban data");
+            };
+            data.ext = SorobanTransactionDataExt::V1(SorobanResourcesExtV0 {
+                archived_soroban_entries: vec![0].try_into().unwrap(),
+            });
+            result["envelopeXdr"] = b64(&TransactionEnvelope::Tx(envelope)).into();
+        })
+        .rewrite_result("getLedgerEntries", move |result| {
+            for entry in result["entries"].as_array_mut().unwrap() {
+                if entry["key"] == listed.as_str() {
+                    entry["liveUntilLedgerSeq"] = (ledger + 1_000_000).into();
+                }
+            }
+        });
+    let report = sororewind::run(&overlay.client(), &request).await.unwrap();
+
+    // Listing an entry changes the declared fee, which the rewrite leaves
+    // as the network charged it; the result itself must still match.
+    assert_eq!(report.fidelity.divergence, Some(Divergence::Fee));
+    assert_eq!(report.result.local.code, report.result.onchain.code);
+    assert_eq!(report.footprint.ttl_drifted.len(), 1);
+    assert_eq!(
+        report.footprint.ttl_drifted[0].reason,
+        TtlDriftReason::RestoredOrExtendedSince
+    );
+    assert!(report.footprint.archived.is_empty());
 }
 
 #[tokio::test]
