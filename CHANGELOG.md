@@ -14,6 +14,8 @@ and can change between releases.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-21
+
 ### Fixed
 
 - `--what-if-protocol 29` on a protocol-30 transaction no longer reports
