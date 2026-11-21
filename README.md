@@ -34,7 +34,7 @@ and the decoded call tree.
 Your transaction failed. The network hands you a result code, a wall of
 diagnostic events, and good luck.
 
-sororewind gives you a story instead. Hand it a hash and it:
+sororewind gives you a diagnosis instead. Hand it a hash and it:
 
 1. **Fetches** the transaction from a Soroban RPC.
 2. **Rebuilds** the world it ran in: footprint entries, TTLs, network cost
@@ -46,8 +46,9 @@ sororewind gives you a story instead. Hand it a hash and it:
    check. `--trace` adds which call failed and how it got there.
 
 And it doesn't ask you to take its word for it. Every replay is checked
-against the result the network recorded. A match means the call tree you are
-reading is the one that really happened. A mismatch is reported loudly, with
+against the result the network recorded. A match (`✓ replay: trap
+reproduced`) means the diagnostic, and the call tree `--trace` shows, come from
+a run that ended the way the real one did. A mismatch is reported loudly, with
 what changed, instead of being quietly smoothed over.
 
 ## Install
@@ -224,7 +225,7 @@ sororewind <hash> --format html > diagnosis.html
 ```
 
 Both are built from the same report as the JSON, not from the terminal
-narrative, and hold the same content: the verdict, the findings, the probable
+output, and hold the full content: the verdict, the findings, the probable
 causes, where it broke, the call tree, the budget and footprint, and the
 diagnostic events. The Markdown puts the call tree and the rest of the detail
 in collapsible sections. The HTML is a single file with its style inline, no
@@ -429,7 +430,7 @@ into `jq`, feed it to CI, build tooling on top of it. The main fields:
 | `feeBump` | Whether it was wrapped in a fee-bump; `hash` is then whichever of the outer and inner hashes you asked for. |
 | `rpc` | Where the responses came from: scheme and host only (a path or query may hold an API key), or `fixture:<dir>`. |
 | `status` | Always `failed`: sororewind only replays failures. |
-| `findings` | What matters, most severe first, as `{ severity, summary, evidence }`, with optional catalog `guidance` (explanation, checks and a verification flag). `severity` is `error` (the transaction's own failure), `divergence` (the replay did not reproduce it; the summary names the probable cause), `warning` (an input may differ from what the transaction saw) or `limitation` (something could not be compared or reproduced). `evidence` lists the report fields it rests on, as paths into this document (`failure`, `probableCauses[0]`, `trust.caveats[2]`). The text report prints them at the top; `-v` adds the evidence. |
+| `findings` | What matters, most severe first, as `{ severity, summary, evidence }`, with optional catalog `guidance` (explanation, checks and a verification flag). `severity` is `error` (the transaction's own failure), `divergence` (the replay did not reproduce it; the summary names the probable cause), `warning` (an input may differ from what the transaction saw) or `limitation` (something could not be compared or reproduced). `evidence` lists the report fields it rests on, as paths into this document (`failure`, `probableCauses[0]`, `trust.caveats[2]`). The `--trace` narrative prints them at the top; `-v` adds the evidence. |
 | `diagnostic` | The primary failure, as the text output prints it but with identifiers whole: `{ code, severity, kind, message, location, details, cause, help, evidence }`. `code` and `kind` are from the table in [Reading the output](#reading-the-output); `severity` is `error`. `location` has the `contract` and `function` when known. `details` holds only the values relevant to the kind: always `result`, then `hostError` (`storage/ExceededLimit`), `key` and `keyContract`, `contractCode` and `errorName`, `causedBy` (`{ contractCode, name, function }`) or `hostMessage`. `cause` and `help` are catalog suggestions. `evidence.source` is `host_diagnostic` (the host error of a matching replay) or `result_code` (the network's result code alone); `outcomeReproduced` says whether the replay matched; `helpVerified` is always `false`; `footprintVerified` (footprint violations only) is `false`, since the key comes from the host's report and is not checked against the footprint. |
 | `replay` | The verdict in a line: `{ status, onChain, local, outcomeMatches, divergence }`. `status` is `trap_reproduced`, `failure_reproduced`, `execution_succeeded` or `replay_mismatch`. `outcomeMatches` compares the result codes only; the run can still diverge in its error, fee or events, which `status` and `divergence` report. |
 | `fidelity.match`, `fidelity.divergence` | Whether the replay matched, and if not, how it diverged: `result`, `error`, `fee` or `events`. |
@@ -541,7 +542,9 @@ contracts: that part is up to you.
 What a replay can and cannot tell you, in one place. The details are in the
 sections linked.
 
-**What a match guarantees.** `✓ replay matches network` means the same
+**What a match guarantees.** `✓ replay: trap reproduced` (`failure
+reproduced` for a failure other than a trap; `✓ replay matches network` in
+`--trace`) means the same
 Soroban host, fed the state sororewind rebuilt, ended with the same result
 and error the network recorded, charged the same non-refundable resource fee
 and left the same start of diagnostic events. It does not mean the state was
@@ -595,8 +598,8 @@ cargo test
 cargo test --release --locked --test live -- --ignored --nocapture
 ```
 
-`cargo test` is fully offline and takes seconds: unit tests plus a snapshot of
-the narrative for every fixture. The last command is the live test CI runs
+`cargo test` is fully offline and takes seconds: unit tests plus snapshots of
+the compact diagnostic and the `--trace` narrative for every fixture. The last command is the live test CI runs
 nightly: it finds recent failed testnet transactions and checks that they
 replay quickly and that at least one matches.
 
@@ -628,7 +631,7 @@ regressions above its 15% noise threshold without blocking the PR.
 an exit code.
 
 ```
-fetch ─► decode ─► reconstruct ─► replay ─► narrate ─► report
+fetch ─► decode ─► reconstruct ─► replay ─► narrate ─► diagnose ─► report
 ```
 
 | Stage | Module | What it does |
@@ -656,8 +659,8 @@ fixture tooling and the live test.
 A fixture is a complete offline recording of every RPC response one replay
 needs. Each directory under `fixtures/` holds one failed transaction, from
 testnet unless its name says otherwise (`mainnet-auth-error`).
-`tests/narrative.rs` pins its narrative and exit code and checks the main JSON
-fields. The layout is documented at the top of `src/transport.rs`.
+`tests/narrative.rs` pins its compact diagnostic, its `--trace` narrative and
+exit code, and checks the main JSON fields and its `SRW` code. The layout is documented at the top of `src/transport.rs`.
 
 Fixtures must replay as a match, so record them soon after the transaction
 ran. First, list recent failures; the first column is the category, which is
@@ -696,7 +699,7 @@ Each fixture comes from a `find_failed` category:
 | `refundable-fee` | A `budget-error` whose result is `insufficient refundable fee`. |
 | `nested-contract-error` | A `contract-error` raised by a WASM contract (the report names it: `contract error #17 · Limit`) whose call tree spans several contracts and levels. |
 | `rebuilt-entry` | A failure of a contract that rewrites its entries every few ledgers (an oracle's `write_prices`, for example) whose replay reports `N rebuilt`. |
-| `auth-check-auth` | An `auth-error` whose call tree, from `sororewind <TX_HASH>`, shows a `__check_auth` call: a custom account contract rejected the signature. |
+| `auth-check-auth` | An `auth-error` whose call tree, from `sororewind <TX_HASH> --trace`, shows a `__check_auth` call: a custom account contract rejected the signature. |
 | `mainnet-*` | A mainnet transaction, recorded with `--network mainnet`, that keeps the older embedded host covered while mainnet runs the previous protocol. |
 
 Recorded fixtures work offline forever. Re-record them when:
