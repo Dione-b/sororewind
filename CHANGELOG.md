@@ -14,6 +14,8 @@ and can change between releases.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-21
+
 ### Fixed
 
 - An entry the transaction listed for restoration that is live now, with a
